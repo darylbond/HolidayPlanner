@@ -44,7 +44,7 @@ export const ItineraryPanel = ({ onClearSelection, plan, selectedDayNumber, onSe
       </div>
 
       <div className="plan-summary-row">
-        <div>{formatBadge(`${plan.selectedDestinations.length} selected destinations`)}</div>
+        <div>{formatBadge(`${plan.selectedDestinations.length} selected stops`)}</div>
         <div>{formatBadge(`${plan.totalStayDays} stay days`)}</div>
         <div>{formatBadge(`${plan.optimizationMode} optimizer`)}</div>
       </div>
@@ -100,12 +100,25 @@ export const ItineraryPanel = ({ onClearSelection, plan, selectedDayNumber, onSe
                   <div className="detail-block">
                     <strong>Suggested fuel stops</strong>
                     {day.fuelStops.map((fuelStop) => (
-                      <div className="list-row" key={fuelStop.id}>
-                        <span>{fuelStop.name}</span>
-                        <span>
-                          {fuelStop.distanceFromDayStartKm} km into the day · about {fuelStop.driveHoursFromDayStart}h
-                        </span>
-                      </div>
+                      fuelStop.osmUrl ? (
+                        <a className="list-row" href={fuelStop.osmUrl} key={fuelStop.id} rel="noreferrer" target="_blank">
+                          <span>{fuelStop.name}</span>
+                          <span>
+                            {fuelStop.distanceFromDayStartKm} km into the day · about {fuelStop.driveHoursFromDayStart}h
+                            {fuelStop.priceLabel ? ` · ${fuelStop.priceLabel}` : ""}
+                            {fuelStop.detourDistanceKm !== undefined ? ` · +${fuelStop.detourDistanceKm} km detour` : ""}
+                          </span>
+                        </a>
+                      ) : (
+                        <div className="list-row" key={fuelStop.id}>
+                          <span>{fuelStop.name}</span>
+                          <span>
+                            {fuelStop.distanceFromDayStartKm} km into the day · about {fuelStop.driveHoursFromDayStart}h
+                            {fuelStop.priceLabel ? ` · ${fuelStop.priceLabel}` : ""}
+                            {fuelStop.detourDistanceKm !== undefined ? ` · +${fuelStop.detourDistanceKm} km detour` : ""}
+                          </span>
+                        </div>
+                      )
                     ))}
                   </div>
                 ) : null}

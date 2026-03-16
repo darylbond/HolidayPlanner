@@ -23,7 +23,10 @@ const markerStyles = {
   fuel: "#0ea5e9",
 } as const;
 
-const candidateMarkerStyle = "#64748b";
+const candidateMarkerStyles = {
+  destination: "#64748b",
+  fuel: "#0ea5e9",
+} as const;
 
 const FitRoute = ({ enabled, points }: { enabled: boolean; points: LatLngTuple[] }) => {
   const map = useMap();
@@ -217,6 +220,8 @@ export const TripMap = ({
               <Popup>
                 <strong>{fuelStop.name}</strong>
                 <div>{fuelStop.distanceFromDayStartKm} km into the selected drive day</div>
+                {fuelStop.priceLabel ? <div>{fuelStop.priceLabel}</div> : null}
+                {fuelStop.detourDistanceKm !== undefined ? <div>Detour adds about {fuelStop.detourDistanceKm} km</div> : null}
               </Popup>
             </CircleMarker>
           ))}
@@ -235,9 +240,9 @@ export const TripMap = ({
               <Popup>
                 <strong>{waypoint.name}</strong>
                 <div>{waypoint.kind}</div>
-                {waypoint.kind === "destination" ? (
+                {waypoint.kind === "destination" || waypoint.kind === "fuel" ? (
                   <button className="ghost-button popup-button" onClick={() => onRemoveDestination(waypoint.id)} type="button">
-                    Remove destination
+                    Remove stop
                   </button>
                 ) : null}
               </Popup>
@@ -283,17 +288,17 @@ export const TripMap = ({
               center={[destination.location.coordinates!.lat, destination.location.coordinates!.lng]}
               key={destination.id}
               pathOptions={{
-                color: candidateMarkerStyle,
-                fillColor: candidateMarkerStyle,
+                color: candidateMarkerStyles[destination.stopType],
+                fillColor: candidateMarkerStyles[destination.stopType],
                 fillOpacity: 0.68,
               }}
               radius={6}
             >
               <Popup>
                 <strong>{destination.location.name}</strong>
-                <div>Candidate destination</div>
+                <div>{destination.stopType === "fuel" ? "Candidate fuel stop" : "Candidate destination"}</div>
                 <button className="ghost-button popup-button" onClick={() => onRemoveDestination(destination.id)} type="button">
-                  Remove destination
+                  Remove stop
                 </button>
               </Popup>
             </CircleMarker>

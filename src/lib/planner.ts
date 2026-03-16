@@ -1,7 +1,8 @@
-import { distanceAlongPathKm, haversineKm, pointAlongPathKm, slicePolylineByKm } from "./geo";
-import { findNearbyCampsites, findPointsOfInterestAlongPath, geocodePlace, routeBetween } from "./osm";
+import { dedupeCoordinates, distanceAlongPathKm, haversineKm, pointAlongPathKm, slicePolylineByKm } from "./geo";
+import { findFuelStationsAlongPath, findNearbyCampsites, findPointsOfInterestAlongPath, geocodePlace, routeBetween } from "./osm";
 import type {
   DailyPlan,
+  FuelStationOption,
   FuelStop,
   PlannerInput,
   PlanningPreview,
@@ -14,6 +15,7 @@ import type {
 
 const ROAD_DISTANCE_MULTIPLIER = 1.22;
 const AVERAGE_ROAD_SPEED_KMH = 75;
+const FUEL_RANGE_BUFFER_RATIO = 0.82;
 
 type SearchResult = {
   ordered: ResolvedWaypoint[];
@@ -27,6 +29,8 @@ type RouteChunk = {
   geometry: RouteSection["geometry"];
   distanceKm: number;
   durationHours: number;
+  startKm: number;
+  endKm: number;
 };
 
 const roundToOneDecimal = (value: number) => Math.round(value * 10) / 10;
@@ -43,6 +47,49 @@ const makeWaypointId = (label: string) =>
     .replace(/(^-|-$)/g, "") || "stop";
 
 const estimateDriveDays = (hours: number, maxDriveHoursPerDay: number) => Math.max(1, Math.ceil(hours / maxDriveHoursPerDay));
+
+const mergeGeometries = (geometries: RouteSection["geometry"][]) =>
+  dedupeCoordinates(
+    geometries.flatMap((geometry, index) => {
+      if (index === 0) {
+        return geometry;
+      }
+
+      return geometry.slice(1);
+    }),
+  );
+
+const makeFuelWaypoint = (station: FuelStationOption): ResolvedWaypoint => ({
+  id: `fuel-${station.id}`,
+  name: station.name,
+  kind: "fuel",
+  coordinates: station.coordinates,
+  stayDays: 0,
+  desirability: 0,
+  notes: station.priceLabel,
+});
+
+const buildApproxFuelCandidateScore = (candidate: FuelStationOption, cheapestKnownPrice: number | null) => {
+  const missingPricePenalty = cheapestKnownPrice === null ? 0 : 18;
+
+  if (candidate.pricePerLitre === undefined) {
+    return candidate.distanceFromRouteKm * 4 + missingPricePenalty;
+  }
+
+  const pricePenalty = cheapestKnownPrice === null ? 0 : Math.max(0, candidate.pricePerLitre - cheapestKnownPrice) * 180;
+  return candidate.distanceFromRouteKm * 4 + pricePenalty;
+};
+
+const buildRoutedFuelCandidateScore = (candidate: FuelStationOption, detourDistanceKm: number, cheapestKnownPrice: number | null) => {
+  const missingPricePenalty = cheapestKnownPrice === null ? 0 : 18;
+
+  if (candidate.pricePerLitre === undefined) {
+    return detourDistanceKm + missingPricePenalty;
+  }
+
+  const pricePenalty = cheapestKnownPrice === null ? 0 : Math.max(0, candidate.pricePerLitre - cheapestKnownPrice) * 180;
+  return detourDistanceKm + pricePenalty;
+};
 
 const makePreview = (
   selectedDestinations: ResolvedWaypoint[],
@@ -88,10 +135,10 @@ const resolveInputWaypoints = async (input: PlannerInput, options?: PlannerOptio
       .map(async (destination) => ({
         id: destination.id,
         name: destination.location.name.trim(),
-        kind: "destination" as const,
+        kind: destination.stopType === "fuel" ? ("fuel" as const) : ("destination" as const),
         coordinates: await resolveLocationCoordinates(destination.location),
-        stayDays: Math.max(0, Math.round(destination.stayDays)),
-        desirability: Math.max(1, Math.round(destination.desirability)),
+        stayDays: destination.stopType === "fuel" ? 0 : Math.max(0, Math.round(destination.stayDays)),
+        desirability: Math.max(0, Math.round(destination.desirability)),
         notes: destination.notes?.trim(),
       })),
   );
@@ -229,6 +276,8 @@ const splitRouteSection = (section: RouteSection, maxDriveHoursPerDay: number): 
         geometry: section.geometry,
         distanceKm: section.distanceKm,
         durationHours: section.durationHours,
+        startKm: 0,
+        endKm: section.distanceKm,
       },
     ];
   }
@@ -253,6 +302,8 @@ const splitRouteSection = (section: RouteSection, maxDriveHoursPerDay: number): 
       geometry,
       distanceKm,
       durationHours,
+      startKm,
+      endKm,
     });
 
     elapsedHours = nextElapsedHours;
@@ -261,36 +312,135 @@ const splitRouteSection = (section: RouteSection, maxDriveHoursPerDay: number): 
   return chunks;
 };
 
-const buildFuelStops = (
-  geometry: RouteSection["geometry"],
-  distanceKm: number,
-  durationHours: number,
-  fuelConsumptionLitresPer100Km: number,
-  fuelTankLitres: number,
-): FuelStop[] => {
-  const tankRangeKm = (fuelTankLitres / fuelConsumptionLitresPer100Km) * 100;
+const chooseFuelStationForSection = async (
+  currentOrigin: ResolvedWaypoint,
+  finalDestination: ResolvedWaypoint,
+  currentSection: RouteSection,
+  distanceTravelledKm: number,
+  usableDistanceKm: number,
+) => {
+  const targetPoint =
+    pointAlongPathKm(currentSection.geometry, Math.max(0, Math.min(currentSection.distanceKm, usableDistanceKm))) ??
+    currentSection.geometry[currentSection.geometry.length - 1] ??
+    currentSection.to.coordinates;
+  const candidates = await findFuelStationsAlongPath(currentSection.geometry, targetPoint);
 
-  if (!Number.isFinite(tankRangeKm) || tankRangeKm <= 0 || distanceKm <= tankRangeKm * 0.82) {
-    return [];
+  if (candidates.length === 0) {
+    throw new Error(`No fuel station could be found near the route from ${currentOrigin.name} to ${finalDestination.name}.`);
   }
 
-  const usableRangeKm = tankRangeKm * 0.82;
-  const stopCount = Math.max(1, Math.ceil(distanceKm / usableRangeKm) - 1);
-  const balancedSegmentKm = distanceKm / (stopCount + 1);
+  const cheapestKnownPrice = candidates.reduce<number | null>((currentCheapest, candidate) => {
+    if (candidate.pricePerLitre === undefined) {
+      return currentCheapest;
+    }
 
-  return Array.from({ length: stopCount }, (_, index) => {
-    const distanceFromDayStartKm = balancedSegmentKm * (index + 1);
-    const coordinates = pointAlongPathKm(geometry, distanceFromDayStartKm) ?? geometry[geometry.length - 1];
+    return currentCheapest === null ? candidate.pricePerLitre : Math.min(currentCheapest, candidate.pricePerLitre);
+  }, null);
 
+  const shortlistedCandidates = [...candidates]
+    .sort(
+      (left, right) =>
+        buildApproxFuelCandidateScore(left, cheapestKnownPrice) - buildApproxFuelCandidateScore(right, cheapestKnownPrice),
+    )
+    .slice(0, 4);
+
+  const evaluatedCandidates = await Promise.all(
+    shortlistedCandidates.map(async (candidate) => {
+      const fuelWaypoint = makeFuelWaypoint(candidate);
+      const [toFuelSection, remainingSection] = await Promise.all([
+        routeBetween(currentOrigin, fuelWaypoint),
+        routeBetween(fuelWaypoint, finalDestination),
+      ]);
+      const detourDistanceKm = toFuelSection.distanceKm + remainingSection.distanceKm - currentSection.distanceKm;
+
+      return {
+        candidate,
+        fuelWaypoint,
+        toFuelSection,
+        remainingSection,
+        detourDistanceKm,
+        score: buildRoutedFuelCandidateScore(candidate, detourDistanceKm, cheapestKnownPrice),
+      };
+    }),
+  );
+
+  const reachableCandidates = evaluatedCandidates
+    .filter((candidate) => candidate.toFuelSection.distanceKm <= usableDistanceKm + 1)
+    .sort((left, right) => left.score - right.score);
+
+  if (reachableCandidates.length === 0) {
+    throw new Error(`Fuel stations near ${currentOrigin.name} require too much detour to stay within tank range.`);
+  }
+
+  const bestCandidate = reachableCandidates[0];
+
+  return {
+    fuelStop: {
+      id: `fuel-stop-${bestCandidate.candidate.id}-${Math.round((distanceTravelledKm + bestCandidate.toFuelSection.distanceKm) * 10)}`,
+      name: bestCandidate.candidate.name,
+      coordinates: bestCandidate.candidate.coordinates,
+      distanceFromSectionStartKm: roundToOneDecimal(distanceTravelledKm + bestCandidate.toFuelSection.distanceKm),
+      distanceFromDayStartKm: 0,
+      driveHoursFromDayStart: 0,
+      priceLabel: bestCandidate.candidate.priceLabel,
+      pricePerLitre: bestCandidate.candidate.pricePerLitre,
+      osmUrl: bestCandidate.candidate.osmUrl,
+      detourDistanceKm: roundToOneDecimal(Math.max(0, bestCandidate.detourDistanceKm)),
+    },
+    waypoint: bestCandidate.fuelWaypoint,
+    toFuelSection: bestCandidate.toFuelSection,
+    remainingSection: bestCandidate.remainingSection,
+  };
+};
+
+const buildRoutedFuelSection = async (section: RouteSection, input: PlannerInput, options?: PlannerOptions): Promise<RouteSection> => {
+  const litresPerKm = input.fuelConsumptionLitresPer100Km / 100;
+  const reserveLitres = input.fuelTankLitres * (1 - FUEL_RANGE_BUFFER_RATIO);
+  const usableDistanceKm = Math.max(0, (input.fuelTankLitres - reserveLitres) / litresPerKm);
+
+  if (!Number.isFinite(usableDistanceKm) || usableDistanceKm <= 0 || section.distanceKm <= usableDistanceKm) {
     return {
-      id: `fuel-stop-${index + 1}-${Math.round(distanceFromDayStartKm * 10)}`,
-      name: `Fuel stop ${index + 1}`,
-      coordinates,
-      distanceFromDayStartKm: roundToOneDecimal(distanceFromDayStartKm),
-      driveHoursFromDayStart:
-        distanceKm === 0 ? 0 : roundToOneDecimal(durationHours * (distanceFromDayStartKm / distanceKm)),
+      ...section,
+      fuelStops: [],
     };
-  });
+  }
+
+  const routedSegments: RouteSection[] = [];
+  const fuelStops: FuelStop[] = [];
+  let distanceTravelledKm = 0;
+  let currentOrigin = section.from;
+  let remainingSection = section;
+
+  while (remainingSection.distanceKm > usableDistanceKm) {
+    emitProgress(options, {
+      stage: "route",
+      message: `Looking up fuel options between ${currentOrigin.name} and ${section.to.name}.`,
+    });
+
+    const selectedFuelStation = await chooseFuelStationForSection(
+      currentOrigin,
+      section.to,
+      remainingSection,
+      distanceTravelledKm,
+      usableDistanceKm,
+    );
+
+    routedSegments.push(selectedFuelStation.toFuelSection);
+    fuelStops.push(selectedFuelStation.fuelStop);
+    distanceTravelledKm += selectedFuelStation.toFuelSection.distanceKm;
+    currentOrigin = selectedFuelStation.waypoint;
+    remainingSection = selectedFuelStation.remainingSection;
+  }
+
+  routedSegments.push(remainingSection);
+
+  return {
+    ...section,
+    geometry: mergeGeometries(routedSegments.map((routeSection) => routeSection.geometry)),
+    distanceKm: routedSegments.reduce((sum, routeSection) => sum + routeSection.distanceKm, 0),
+    durationHours: routedSegments.reduce((sum, routeSection) => sum + routeSection.durationHours, 0),
+    fuelStops,
+  };
 };
 
 const buildDailyPlans = async (
@@ -330,13 +480,21 @@ const buildDailyPlans = async (
 
       const fuelUsedLitres = (chunk.distanceKm * input.fuelConsumptionLitresPer100Km) / 100;
       cumulativeFuelUsedLitres += fuelUsedLitres;
-      const fuelStops = buildFuelStops(
-        chunk.geometry,
-        chunk.distanceKm,
-        chunk.durationHours,
-        input.fuelConsumptionLitresPer100Km,
-        input.fuelTankLitres,
-      );
+      const fuelStops = section.fuelStops
+        .filter(
+          (fuelStop) =>
+            fuelStop.distanceFromSectionStartKm >= chunk.startKm - 0.01 && fuelStop.distanceFromSectionStartKm <= chunk.endKm + 0.01,
+        )
+        .map((fuelStop) => {
+          const distanceFromDayStartKm = Math.max(0, fuelStop.distanceFromSectionStartKm - chunk.startKm);
+
+          return {
+            ...fuelStop,
+            distanceFromDayStartKm: roundToOneDecimal(distanceFromDayStartKm),
+            driveHoursFromDayStart:
+              chunk.distanceKm === 0 ? 0 : roundToOneDecimal(chunk.durationHours * (distanceFromDayStartKm / chunk.distanceKm)),
+          };
+        });
       const notes = [] as string[];
 
       if (!finalChunk) {
@@ -347,9 +505,16 @@ const buildDailyPlans = async (
         notes.push(`Arrival day for ${targetWaypoint.name}. ${targetWaypoint.stayDays} stay day(s) are allocated next.`);
       }
 
+      if (finalChunk && targetWaypoint.kind === "fuel") {
+        notes.push(`Planned fuel stop at ${targetWaypoint.name}.`);
+      }
+
       if (fuelStops.length > 0) {
+        const pricedStops = fuelStops.filter((fuelStop) => fuelStop.priceLabel);
         notes.push(
-          `Balanced ${fuelStops.length} fuel stop${fuelStops.length === 1 ? "" : "s"} across the drive day to keep each leg within tank range.`,
+          pricedStops.length > 0
+            ? `Inserted ${fuelStops.length} routed fuel stop${fuelStops.length === 1 ? "" : "s"}, favouring stations with known pricing when available.`
+            : `Inserted ${fuelStops.length} routed fuel stop${fuelStops.length === 1 ? "" : "s"} and included the detour in the route geometry.`,
         );
       }
 
@@ -475,15 +640,18 @@ export const planRoadTrip = async (input: PlannerInput, options?: PlannerOptions
   );
 
   const completedRouteSections = routeSections.filter((item): item is RouteSection => item !== null);
-  const dailyPlans = await buildDailyPlans(allWaypoints, completedRouteSections, input, options);
-  const totalDistanceKm = completedRouteSections.reduce((sum, section) => sum + section.distanceKm, 0);
-  const totalDriveHours = completedRouteSections.reduce((sum, section) => sum + section.durationHours, 0);
+  const routedFuelSections = await Promise.all(
+    completedRouteSections.map(async (section) => buildRoutedFuelSection(section, input, options)),
+  );
+  const dailyPlans = await buildDailyPlans(allWaypoints, routedFuelSections, input, options);
+  const totalDistanceKm = routedFuelSections.reduce((sum, section) => sum + section.distanceKm, 0);
+  const totalDriveHours = routedFuelSections.reduce((sum, section) => sum + section.durationHours, 0);
   const totalStayDays = selectedRoute.ordered.reduce((sum, waypoint) => sum + waypoint.stayDays, 0);
 
   const result: TripPlan = {
     selectedDestinations: selectedRoute.ordered,
     allWaypoints,
-    routeSections: completedRouteSections,
+    routeSections: routedFuelSections,
     dailyPlans,
     totalDriveHours: roundToOneDecimal(totalDriveHours),
     totalDistanceKm: roundToOneDecimal(totalDistanceKm),
@@ -496,7 +664,7 @@ export const planRoadTrip = async (input: PlannerInput, options?: PlannerOptions
   emitProgress(options, {
     stage: "complete",
     message: `Plan ready with ${dailyPlans.length} days across ${selectedRoute.ordered.length} destinations.`,
-    preview: makePreview(selectedRoute.ordered, allWaypoints, completedRouteSections),
+    preview: makePreview(selectedRoute.ordered, allWaypoints, routedFuelSections),
   });
 
   return result;

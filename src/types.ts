@@ -8,9 +8,12 @@ export type PlannerLocationInput = {
   coordinates?: Coordinates;
 };
 
+export type DestinationStopType = "destination" | "fuel";
+
 export type DestinationInput = {
   id: string;
   location: PlannerLocationInput;
+  stopType: DestinationStopType;
   stayDays: number;
   desirability: number;
   notes?: string;
@@ -26,7 +29,7 @@ export type PlannerInput = {
   destinations: DestinationInput[];
 };
 
-export type WaypointKind = "start" | "destination" | "end" | "overnight";
+export type WaypointKind = "start" | "destination" | "fuel" | "end" | "overnight";
 
 export type ResolvedWaypoint = {
   id: string;
@@ -45,6 +48,7 @@ export type RouteSection = {
   distanceKm: number;
   durationHours: number;
   geometry: Coordinates[];
+  fuelStops: FuelStop[];
 };
 
 export type CampsiteOption = {
@@ -67,8 +71,23 @@ export type FuelStop = {
   id: string;
   name: string;
   coordinates: Coordinates;
+  distanceFromSectionStartKm: number;
   distanceFromDayStartKm: number;
   driveHoursFromDayStart: number;
+  priceLabel?: string;
+  pricePerLitre?: number;
+  osmUrl?: string;
+  detourDistanceKm?: number;
+};
+
+export type FuelStationOption = {
+  id: string;
+  name: string;
+  coordinates: Coordinates;
+  distanceFromRouteKm: number;
+  osmUrl: string;
+  priceLabel?: string;
+  pricePerLitre?: number;
 };
 
 export type LocationCandidate = {

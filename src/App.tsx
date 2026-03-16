@@ -36,6 +36,7 @@ const defaultPlannerInput: PlannerInput = {
       location: {
         name: "Canberra ACT",
       },
+      stopType: "destination",
       stayDays: 1,
       desirability: 6,
       notes: "Short city stop with galleries and lake walks.",
@@ -45,6 +46,7 @@ const defaultPlannerInput: PlannerInput = {
       location: {
         name: "Jervis Bay NSW",
       },
+      stopType: "destination",
       stayDays: 2,
       desirability: 9,
       notes: "Beach time and national park walks.",
@@ -54,6 +56,7 @@ const defaultPlannerInput: PlannerInput = {
       location: {
         name: "Lakes Entrance VIC",
       },
+      stopType: "destination",
       stayDays: 2,
       desirability: 8,
       notes: "Coastal rest days and easy base for Gippsland.",
@@ -63,6 +66,7 @@ const defaultPlannerInput: PlannerInput = {
       location: {
         name: "Wilsons Promontory VIC",
       },
+      stopType: "destination",
       stayDays: 2,
       desirability: 10,
       notes: "High-priority nature stop.",
@@ -72,6 +76,7 @@ const defaultPlannerInput: PlannerInput = {
       location: {
         name: "Bright VIC",
       },
+      stopType: "destination",
       stayDays: 2,
       desirability: 7,
       notes: "Mountain town stop for slower days.",
@@ -81,6 +86,7 @@ const defaultPlannerInput: PlannerInput = {
       location: {
         name: "Eden NSW",
       },
+      stopType: "destination",
       stayDays: 1,
       desirability: 7,
       notes: "Harbour stop with easy coastline access.",
@@ -90,6 +96,7 @@ const defaultPlannerInput: PlannerInput = {
       location: {
         name: "Phillip Island VIC",
       },
+      stopType: "destination",
       stayDays: 1,
       desirability: 8,
       notes: "Penguins and a short coastal break before Melbourne.",
@@ -99,6 +106,7 @@ const defaultPlannerInput: PlannerInput = {
       location: {
         name: "Albury NSW",
       },
+      stopType: "destination",
       stayDays: 1,
       desirability: 5,
       notes: "Low-friction inland stop if the coastal route gets too long.",
@@ -117,6 +125,7 @@ const createBlankDestination = (location?: PlannerLocationInput): DestinationInp
   location: location ?? {
     name: "",
   },
+  stopType: "destination",
   stayDays: 1,
   desirability: 5,
   notes: "",

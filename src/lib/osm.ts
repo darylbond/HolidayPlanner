@@ -2,6 +2,7 @@ import { dedupeCoordinates, distanceFromPointToPathKm, getBoundingBox, haversine
 import type {
   CampsiteOption,
   Coordinates,
+  FuelStationOption,
   LocationCandidate,
   PointOfInterest,
   ResolvedWaypoint,
@@ -62,6 +63,7 @@ const reverseGeocodeCache = new Map<string, LocationCandidate>();
 const routeCache = new Map<string, RouteSection>();
 const campsiteCache = new Map<string, CampsiteOption[]>();
 const poiCache = new Map<string, PointOfInterest[]>();
+const fuelCache = new Map<string, FuelStationOption[]>();
 
 const roundCoordinate = (value: number) => Math.round(value * 100000) / 100000;
 
@@ -109,6 +111,51 @@ const getElementCoordinates = (element: OverpassElement): Coordinates | null => 
 };
 
 const buildOsmUrl = (element: OverpassElement) => `https://www.openstreetmap.org/${element.type}/${element.id}`;
+
+const PRICE_TAGS = ["fuel:diesel", "fuel:e10", "fuel:octane_91", "fuel:octane_95", "fuel:lpg", "fuel:cng"];
+
+const parseFuelPrice = (value: string | undefined) => {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.replace(/,/g, ".");
+  const match = normalized.match(/\d+(?:\.\d+)?/);
+
+  if (!match) {
+    return null;
+  }
+
+  const numericValue = Number.parseFloat(match[0]);
+  return Number.isFinite(numericValue) ? numericValue : null;
+};
+
+const getFuelPriceDetails = (tags: Record<string, string> | undefined) => {
+  if (!tags) {
+    return {};
+  }
+
+  const pricedTags = PRICE_TAGS
+    .map((key) => ({
+      key,
+      rawValue: tags[key],
+      numericValue: parseFuelPrice(tags[key]),
+    }))
+    .filter((entry): entry is { key: string; rawValue: string; numericValue: number } => entry.rawValue !== undefined && entry.numericValue !== null)
+    .sort((left, right) => left.numericValue - right.numericValue);
+
+  if (pricedTags.length === 0) {
+    return {};
+  }
+
+  const bestPrice = pricedTags[0];
+  const labelKey = bestPrice.key.replace("fuel:", "").replace(/_/g, " ");
+
+  return {
+    pricePerLitre: bestPrice.numericValue,
+    priceLabel: `${labelKey} ${bestPrice.rawValue}`,
+  };
+};
 
 const formatPhotonLabel = (feature: PhotonFeature, fallbackName: string) => {
   const properties = feature.properties ?? {};
@@ -234,10 +281,90 @@ export const routeBetween = async (from: ResolvedWaypoint, to: ResolvedWaypoint)
     distanceKm: route.distance / 1000,
     durationHours: route.duration / 3600,
     geometry,
+    fuelStops: [],
   };
 
   routeCache.set(cacheKey, section);
   return section;
+};
+
+export const findFuelStationsAlongPath = async (path: Coordinates[], around: Coordinates): Promise<FuelStationOption[]> => {
+  if (path.length < 2) {
+    return [];
+  }
+
+  const cacheKey = `${makeCoordinateKey(around)}::${path.length}::fuel`;
+  const cached = fuelCache.get(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
+  const query = `
+[out:json][timeout:25];
+(
+  node(around:20000,${around.lat},${around.lng})["amenity"="fuel"];
+  way(around:20000,${around.lat},${around.lng})["amenity"="fuel"];
+  relation(around:20000,${around.lat},${around.lng})["amenity"="fuel"];
+);
+out center 60;
+`;
+
+  const payload = await overpassFetch(query);
+  const seen = new Set<string>();
+
+  const stations = payload.elements
+    .map((element) => {
+      const coordinates = getElementCoordinates(element);
+
+      if (!coordinates) {
+        return null;
+      }
+
+      const distanceFromRouteKm = distanceFromPointToPathKm(coordinates, path);
+
+      if (distanceFromRouteKm > 12) {
+        return null;
+      }
+
+      const key = `${Math.round(coordinates.lat * 1000)}-${Math.round(coordinates.lng * 1000)}`;
+
+      if (seen.has(key)) {
+        return null;
+      }
+
+      seen.add(key);
+
+      const tags = element.tags ?? {};
+      const priceDetails = getFuelPriceDetails(tags);
+      const station: FuelStationOption = {
+        id: `${element.type}-${element.id}`,
+        name: tags.name ?? "Fuel station",
+        coordinates,
+        distanceFromRouteKm,
+        osmUrl: buildOsmUrl(element),
+        priceLabel: priceDetails.priceLabel,
+        pricePerLitre: priceDetails.pricePerLitre,
+      };
+
+      return station;
+    })
+    .filter((station): station is FuelStationOption => station !== null)
+    .sort((left, right) => {
+      if (left.pricePerLitre !== undefined && right.pricePerLitre !== undefined && left.pricePerLitre !== right.pricePerLitre) {
+        return left.pricePerLitre - right.pricePerLitre;
+      }
+
+      if (left.pricePerLitre !== undefined || right.pricePerLitre !== undefined) {
+        return left.pricePerLitre !== undefined ? -1 : 1;
+      }
+
+      return left.distanceFromRouteKm - right.distanceFromRouteKm;
+    })
+    .slice(0, 10);
+
+  fuelCache.set(cacheKey, stations);
+  return stations;
 };
 
 const formatCampsiteDescription = (tags: Record<string, string> | undefined) => {

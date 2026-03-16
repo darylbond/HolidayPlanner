@@ -21,6 +21,11 @@ type NumericPlannerField =
 const describeLocation = (location: PlannerLocationInput) =>
   location.coordinates ? "Pinned coordinates retained. Reconfirm on map if you changed the place text." : "Text only. Use Confirm on map for an explicit pin.";
 
+const describeDestination = (destination: DestinationInput) =>
+  destination.stopType === "fuel"
+    ? `${describeLocation(destination.location)} Marked as a fuel stop, so it does not allocate stay days.`
+    : describeLocation(destination.location);
+
 export const PlannerForm = ({
   isPlanning,
   onAddDestination,
@@ -85,6 +90,22 @@ export const PlannerForm = ({
                 name,
                 coordinates: destination.location.coordinates,
               },
+            }
+          : destination,
+      ),
+    });
+  };
+
+  const updateDestinationStopType = (destinationId: string, stopType: DestinationInput["stopType"]) => {
+    onChange({
+      ...value,
+      destinations: value.destinations.map((destination) =>
+        destination.id === destinationId
+          ? {
+              ...destination,
+              stopType,
+              stayDays: stopType === "fuel" ? 0 : destination.stayDays,
+              desirability: stopType === "fuel" && destination.desirability < 1 ? 0 : destination.desirability,
             }
           : destination,
       ),
@@ -207,9 +228,9 @@ export const PlannerForm = ({
         <div className="section-header inline-header">
           <div>
             <p className="eyebrow">Stops</p>
-            <h3>Candidate destinations</h3>
+            <h3>Candidate stops</h3>
             <p className="subtle-copy">
-              Add as many candidates as you need. The planner uses a fast heuristic, then keeps only the set that fits.
+              Add destinations, fuel stops, or a mix of both. The planner uses a fast heuristic, then keeps only the set that fits.
             </p>
           </div>
           <div className="header-actions">
@@ -224,6 +245,7 @@ export const PlannerForm = ({
 
         <div className="destination-summary-row">
           <span className="pill">{value.destinations.length} candidates</span>
+          <span className="pill">{value.destinations.filter((destination) => destination.stopType === "fuel").length} fuel stops</span>
           <span className="pill">{value.destinations.filter((destination) => destination.location.coordinates).length} map-confirmed</span>
         </div>
 
@@ -235,7 +257,7 @@ export const PlannerForm = ({
                   <div>
                     <strong>Stop {index + 1}</strong>
                     <p className="destination-card-title">{destination.location.name.trim() || "Untitled destination"}</p>
-                    <p className="destination-status">{describeLocation(destination.location)}</p>
+                    <p className="destination-status">{describeDestination(destination)}</p>
                   </div>
                   <div className="destination-card-actions">
                     <button
@@ -253,8 +275,19 @@ export const PlannerForm = ({
 
                 {isDestinationExpanded(destination.id) ? (
                   <div className="field-grid destination-grid destination-card-body">
+                    <label>
+                      <span>Stop type</span>
+                      <select
+                        value={destination.stopType}
+                        onChange={(event) => updateDestinationStopType(destination.id, event.target.value as DestinationInput["stopType"])}
+                      >
+                        <option value="destination">Destination stay</option>
+                        <option value="fuel">Fuel stop</option>
+                      </select>
+                    </label>
+
                     <label className="destination-name">
-                      <span>Destination</span>
+                      <span>{destination.stopType === "fuel" ? "Fuel stop location" : "Destination"}</span>
                       <div className="location-input-row">
                         <input
                           value={destination.location.name}
@@ -285,15 +318,16 @@ export const PlannerForm = ({
                         min="0"
                         step="1"
                         value={destination.stayDays}
+                        disabled={destination.stopType === "fuel"}
                         onChange={(event) => updateDestination(destination.id, "stayDays", Number(event.target.value))}
                       />
                     </label>
 
                     <label>
-                      <span>Desirability</span>
+                      <span>{destination.stopType === "fuel" ? "Priority" : "Desirability"}</span>
                       <input
                         type="number"
-                        min="1"
+                        min="0"
                         max="10"
                         step="1"
                         value={destination.desirability}
@@ -307,7 +341,7 @@ export const PlannerForm = ({
                         value={destination.notes ?? ""}
                         onChange={(event) => updateDestination(destination.id, "notes", event.target.value)}
                         rows={2}
-                        placeholder="Optional notes for the stay"
+                        placeholder={destination.stopType === "fuel" ? "Optional notes for the fuel stop" : "Optional notes for the stay"}
                       />
                     </label>
                   </div>
