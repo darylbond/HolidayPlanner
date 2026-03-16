@@ -149,6 +149,16 @@ const isReadyToPlan = (input: PlannerInput) =>
 const fallbackPinnedName = (coordinates: PlannerLocationInput["coordinates"]) =>
   coordinates ? `Pinned ${coordinates.lat.toFixed(4)}, ${coordinates.lng.toFixed(4)}` : "Pinned location";
 
+const formatPlanningError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : "Planning failed.";
+
+  if (message.includes("rate limiting") || message.includes("429")) {
+    return "Public map services are busy right now. The planner slowed and retried requests already, but this run still hit rate limits. Wait a moment and try again.";
+  }
+
+  return message;
+};
+
 function App() {
   const [plannerInput, setPlannerInput] = useState<PlannerInput>(defaultPlannerInput);
   const [plan, setPlan] = useState<TripPlan | null>(null);
@@ -215,8 +225,9 @@ function App() {
         return;
       }
 
-      setErrorMessage(error instanceof Error ? error.message : "Planning failed.");
-      appendLog("complete", error instanceof Error ? `Planning failed: ${error.message}` : "Planning failed.");
+      const nextErrorMessage = formatPlanningError(error);
+      setErrorMessage(nextErrorMessage);
+      appendLog("complete", `Planning failed: ${nextErrorMessage}`);
     } finally {
       if (requestId === activePlanningRequest.current) {
         setIsPlanning(false);

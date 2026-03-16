@@ -21,6 +21,8 @@ The app is fully client-side and uses public OpenStreetMap ecosystem endpoints:
 
 These are convenient for a prototype and GitHub Pages deployment, but they are public shared services. For higher-volume or commercial use, replace them with your own hosted services or managed APIs.
 
+The app now spaces out public API calls, retries transient 429 and 503 responses, and batches the main OSRM trip route into a single request where possible. That makes it more tolerant of shared-service limits, but it does not remove those limits entirely.
+
 ## Local development
 
 1. Install Node.js 20 or newer.

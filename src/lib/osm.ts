@@ -55,7 +55,24 @@ type OSRMResponse = {
     geometry: {
       coordinates: [number, number][];
     };
+    legs?: Array<{
+      distance: number;
+      duration: number;
+      steps?: Array<{
+        geometry?: {
+          coordinates?: [number, number][];
+        };
+      }>;
+    }>;
   }>;
+};
+
+type ServiceKey = "photon" | "osrm" | "overpass";
+
+type ServiceConfig = {
+  minIntervalMs: number;
+  maxRetries: number;
+  retryBaseMs: number;
 };
 
 const geocodeCache = new Map<string, LocationCandidate[]>();
@@ -64,6 +81,35 @@ const routeCache = new Map<string, RouteSection>();
 const campsiteCache = new Map<string, CampsiteOption[]>();
 const poiCache = new Map<string, PointOfInterest[]>();
 const fuelCache = new Map<string, FuelStationOption[]>();
+const pendingJsonRequests = new Map<string, Promise<unknown>>();
+const serviceQueueTails: Record<ServiceKey, Promise<void>> = {
+  photon: Promise.resolve(),
+  osrm: Promise.resolve(),
+  overpass: Promise.resolve(),
+};
+const serviceNextRequestAt: Record<ServiceKey, number> = {
+  photon: 0,
+  osrm: 0,
+  overpass: 0,
+};
+
+const SERVICE_CONFIGS: Record<ServiceKey, ServiceConfig> = {
+  photon: {
+    minIntervalMs: 150,
+    maxRetries: 2,
+    retryBaseMs: 900,
+  },
+  osrm: {
+    minIntervalMs: 250,
+    maxRetries: 3,
+    retryBaseMs: 1200,
+  },
+  overpass: {
+    minIntervalMs: 1200,
+    maxRetries: 2,
+    retryBaseMs: 2500,
+  },
+};
 
 const roundCoordinate = (value: number) => Math.round(value * 100000) / 100000;
 
@@ -72,30 +118,128 @@ const makeCoordinateKey = (coordinates: Coordinates) => `${roundCoordinate(coord
 const makeRouteCacheKey = (from: ResolvedWaypoint, to: ResolvedWaypoint) =>
   `${makeCoordinateKey(from.coordinates)}->${makeCoordinateKey(to.coordinates)}`;
 
-const fetchJson = async <Payload>(url: string, init?: RequestInit) => {
-  const response = await fetch(url, init);
+const wait = (delayMs: number) =>
+  new Promise<void>((resolve) => {
+    window.setTimeout(resolve, delayMs);
+  });
 
-  if (!response.ok) {
-    throw new Error(`Request failed with ${response.status}.`);
+const parseRetryAfterMs = (retryAfterHeader: string | null) => {
+  if (!retryAfterHeader) {
+    return null;
   }
 
-  return (await response.json()) as Payload;
+  const retryAfterSeconds = Number.parseInt(retryAfterHeader, 10);
+
+  if (Number.isFinite(retryAfterSeconds)) {
+    return Math.max(0, retryAfterSeconds * 1000);
+  }
+
+  const retryDateMs = Date.parse(retryAfterHeader);
+
+  if (Number.isNaN(retryDateMs)) {
+    return null;
+  }
+
+  return Math.max(0, retryDateMs - Date.now());
+};
+
+const runQueuedRequest = async <Payload>(service: ServiceKey, task: () => Promise<Payload>) => {
+  const previousTail = serviceQueueTails[service];
+  const requestPromise = previousTail
+    .catch(() => undefined)
+    .then(async () => {
+      const delayMs = Math.max(0, serviceNextRequestAt[service] - Date.now());
+
+      if (delayMs > 0) {
+        await wait(delayMs);
+      }
+
+      serviceNextRequestAt[service] = Date.now() + SERVICE_CONFIGS[service].minIntervalMs;
+      return task();
+    });
+
+  serviceQueueTails[service] = requestPromise.then(
+    () => undefined,
+    () => undefined,
+  );
+
+  return requestPromise;
+};
+
+const buildRequestKey = (service: ServiceKey, url: string, init?: RequestInit) => {
+  const method = init?.method ?? "GET";
+  const body = typeof init?.body === "string" ? init.body : "";
+  return `${service}:${method}:${url}:${body}`;
+};
+
+const buildRateLimitError = (service: ServiceKey) => {
+  const serviceLabel = service === "osrm" ? "routing" : service === "overpass" ? "map data" : "geocoding";
+  return new Error(`Public ${serviceLabel} services are rate limiting requests right now. Please wait a moment and try again.`);
+};
+
+const fetchJson = async <Payload>(service: ServiceKey, url: string, init?: RequestInit) => {
+  const requestKey = buildRequestKey(service, url, init);
+  const pendingRequest = pendingJsonRequests.get(requestKey) as Promise<Payload> | undefined;
+
+  if (pendingRequest) {
+    return pendingRequest;
+  }
+
+  const requestPromise = (async () => {
+    const config = SERVICE_CONFIGS[service];
+
+    for (let attempt = 0; attempt <= config.maxRetries; attempt += 1) {
+      const response = await runQueuedRequest(service, () => fetch(url, init));
+
+      if (response.ok) {
+        return (await response.json()) as Payload;
+      }
+
+      if (response.status === 429 || response.status === 503) {
+        const retryAfterMs =
+          parseRetryAfterMs(response.headers.get("Retry-After")) ?? config.retryBaseMs * Math.pow(2, attempt);
+        await wait(retryAfterMs);
+        continue;
+      }
+
+      throw new Error(`Request failed with ${response.status}.`);
+    }
+
+    throw buildRateLimitError(service);
+  })().finally(() => {
+    pendingJsonRequests.delete(requestKey);
+  });
+
+  pendingJsonRequests.set(requestKey, requestPromise as Promise<unknown>);
+  return requestPromise;
 };
 
 const overpassFetch = async (query: string) => {
-  const response = await fetch(OVERPASS_URL, {
+  return fetchJson<{ elements: OverpassElement[] }>("overpass", OVERPASS_URL, {
     method: "POST",
     body: query,
     headers: {
       "Content-Type": "text/plain",
     },
   });
+};
 
-  if (!response.ok) {
-    throw new Error(`Overpass request failed with ${response.status}.`);
+const buildGeometryFromCoordinates = (coordinates: [number, number][]) =>
+  dedupeCoordinates(
+    coordinates.map(([lng, lat]) => ({
+      lat,
+      lng,
+    })),
+  );
+
+const buildGeometryFromLeg = (leg: NonNullable<OSRMResponse["routes"][number]["legs"]>[number], fallback: Coordinates[]) => {
+  const stepCoordinates = leg.steps?.flatMap((step) => step.geometry?.coordinates ?? []) ?? [];
+
+  if (stepCoordinates.length === 0) {
+    return fallback;
   }
 
-  return (await response.json()) as { elements: OverpassElement[] };
+  return buildGeometryFromCoordinates(stepCoordinates);
 };
 
 const getElementCoordinates = (element: OverpassElement): Coordinates | null => {
@@ -200,7 +344,7 @@ export const searchPlaceCandidates = async (query: string, limit = 5): Promise<L
   }
 
   const url = `${PHOTON_SEARCH_URL}?limit=${limit}&q=${encodeURIComponent(trimmedQuery)}`;
-  const payload = await fetchJson<PhotonResponse>(url, {
+  const payload = await fetchJson<PhotonResponse>("photon", url, {
     headers: {
       Accept: "application/json",
     },
@@ -233,7 +377,7 @@ export const reverseGeocodePlace = async (coordinates: Coordinates): Promise<Loc
   }
 
   const url = `${PHOTON_REVERSE_URL}?lat=${coordinates.lat}&lon=${coordinates.lng}`;
-  const payload = await fetchJson<PhotonResponse>(url, {
+  const payload = await fetchJson<PhotonResponse>("photon", url, {
     headers: {
       Accept: "application/json",
     },
@@ -260,7 +404,7 @@ export const routeBetween = async (from: ResolvedWaypoint, to: ResolvedWaypoint)
   }
 
   const url = `${OSRM_URL}/${from.coordinates.lng},${from.coordinates.lat};${to.coordinates.lng},${to.coordinates.lat}?overview=full&geometries=geojson`;
-  const payload = await fetchJson<OSRMResponse>(url);
+  const payload = await fetchJson<OSRMResponse>("osrm", url);
 
   if (payload.code !== "Ok" || payload.routes.length === 0) {
     throw new Error(`No route found between ${from.name} and ${to.name}.`);
@@ -286,6 +430,74 @@ export const routeBetween = async (from: ResolvedWaypoint, to: ResolvedWaypoint)
 
   routeCache.set(cacheKey, section);
   return section;
+};
+
+export const routeSequence = async (waypoints: ResolvedWaypoint[]): Promise<RouteSection[]> => {
+  if (waypoints.length < 2) {
+    return [];
+  }
+
+  const uncachedSections: Array<{ from: ResolvedWaypoint; to: ResolvedWaypoint; index: number }> = [];
+  const sections: RouteSection[] = new Array(waypoints.length - 1);
+
+  waypoints.slice(0, -1).forEach((waypoint, index) => {
+    const nextWaypoint = waypoints[index + 1];
+    const cacheKey = makeRouteCacheKey(waypoint, nextWaypoint);
+    const cached = routeCache.get(cacheKey);
+
+    if (cached) {
+      sections[index] = cached;
+      return;
+    }
+
+    uncachedSections.push({
+      from: waypoint,
+      to: nextWaypoint,
+      index,
+    });
+  });
+
+  if (uncachedSections.length === 0) {
+    return sections;
+  }
+
+  const batchedWaypoints = [uncachedSections[0].from, ...uncachedSections.map((section) => section.to)];
+  const coordinatePath = batchedWaypoints
+    .map((waypoint) => `${waypoint.coordinates.lng},${waypoint.coordinates.lat}`)
+    .join(";");
+  const url = `${OSRM_URL}/${coordinatePath}?overview=full&steps=true&geometries=geojson`;
+  const payload = await fetchJson<OSRMResponse>("osrm", url);
+
+  if (payload.code !== "Ok" || payload.routes.length === 0) {
+    throw new Error("No route found for the selected trip path.");
+  }
+
+  const route = payload.routes[0];
+  const legs = route.legs ?? [];
+
+  if (legs.length !== uncachedSections.length) {
+    throw new Error("The routing service returned incomplete trip legs.");
+  }
+
+  uncachedSections.forEach((uncachedSection, legIndex) => {
+    const leg = legs[legIndex];
+    const fallbackGeometry = [uncachedSection.from.coordinates, uncachedSection.to.coordinates];
+    const geometry = buildGeometryFromLeg(leg, fallbackGeometry);
+    const section: RouteSection = {
+      id: `${uncachedSection.from.id}-${uncachedSection.to.id}`,
+      from: uncachedSection.from,
+      to: uncachedSection.to,
+      distanceKm: leg.distance / 1000,
+      durationHours: leg.duration / 3600,
+      geometry,
+      fuelStops: [],
+    };
+
+    routeCache.set(makeRouteCacheKey(uncachedSection.from, uncachedSection.to), section);
+    sections[uncachedSection.index] = section;
+  });
+
+  return sections;
 };
 
 export const findFuelStationsAlongPath = async (path: Coordinates[], around: Coordinates): Promise<FuelStationOption[]> => {

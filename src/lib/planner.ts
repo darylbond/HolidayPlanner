@@ -1,5 +1,5 @@
 import { dedupeCoordinates, distanceAlongPathKm, haversineKm, pointAlongPathKm, slicePolylineByKm } from "./geo";
-import { findFuelStationsAlongPath, findNearbyCampsites, findPointsOfInterestAlongPath, geocodePlace, routeBetween } from "./osm";
+import { findFuelStationsAlongPath, findNearbyCampsites, findPointsOfInterestAlongPath, geocodePlace, routeBetween, routeSequence } from "./osm";
 import type {
   DailyPlan,
   FuelStationOption,
@@ -91,6 +91,16 @@ const buildRoutedFuelCandidateScore = (candidate: FuelStationOption, detourDista
   return detourDistanceKm + pricePenalty;
 };
 
+const mapInOrder = async <Input, Output>(items: Input[], mapper: (item: Input, index: number) => Promise<Output>) => {
+  const results: Output[] = [];
+
+  for (const [index, item] of items.entries()) {
+    results.push(await mapper(item, index));
+  }
+
+  return results;
+};
+
 const makePreview = (
   selectedDestinations: ResolvedWaypoint[],
   allWaypoints: ResolvedWaypoint[],
@@ -124,15 +134,12 @@ const resolveInputWaypoints = async (input: PlannerInput, options?: PlannerOptio
     message: `Resolving ${input.destinations.filter((destination) => destination.location.name.trim().length > 0).length + 2} locations.`,
   });
 
-  const [startCoordinates, endCoordinates] = await Promise.all([
-    resolveLocationCoordinates(input.start),
-    resolveLocationCoordinates(input.end),
-  ]);
+  const startCoordinates = await resolveLocationCoordinates(input.start);
+  const endCoordinates = await resolveLocationCoordinates(input.end);
 
-  const destinations = await Promise.all(
-    input.destinations
-      .filter((destination) => destination.location.name.trim().length > 0)
-      .map(async (destination) => ({
+  const destinations = await mapInOrder(
+    input.destinations.filter((destination) => destination.location.name.trim().length > 0),
+    async (destination) => ({
         id: destination.id,
         name: destination.location.name.trim(),
         kind: destination.stopType === "fuel" ? ("fuel" as const) : ("destination" as const),
@@ -140,7 +147,7 @@ const resolveInputWaypoints = async (input: PlannerInput, options?: PlannerOptio
         stayDays: destination.stopType === "fuel" ? 0 : Math.max(0, Math.round(destination.stayDays)),
         desirability: Math.max(0, Math.round(destination.desirability)),
         notes: destination.notes?.trim(),
-      })),
+      }),
   );
 
   const start: ResolvedWaypoint = {
@@ -344,25 +351,21 @@ const chooseFuelStationForSection = async (
     )
     .slice(0, 4);
 
-  const evaluatedCandidates = await Promise.all(
-    shortlistedCandidates.map(async (candidate) => {
-      const fuelWaypoint = makeFuelWaypoint(candidate);
-      const [toFuelSection, remainingSection] = await Promise.all([
-        routeBetween(currentOrigin, fuelWaypoint),
-        routeBetween(fuelWaypoint, finalDestination),
-      ]);
-      const detourDistanceKm = toFuelSection.distanceKm + remainingSection.distanceKm - currentSection.distanceKm;
+  const evaluatedCandidates = await mapInOrder(shortlistedCandidates, async (candidate) => {
+    const fuelWaypoint = makeFuelWaypoint(candidate);
+    const toFuelSection = await routeBetween(currentOrigin, fuelWaypoint);
+    const remainingSection = await routeBetween(fuelWaypoint, finalDestination);
+    const detourDistanceKm = toFuelSection.distanceKm + remainingSection.distanceKm - currentSection.distanceKm;
 
-      return {
-        candidate,
-        fuelWaypoint,
-        toFuelSection,
-        remainingSection,
-        detourDistanceKm,
-        score: buildRoutedFuelCandidateScore(candidate, detourDistanceKm, cheapestKnownPrice),
-      };
-    }),
-  );
+    return {
+      candidate,
+      fuelWaypoint,
+      toFuelSection,
+      remainingSection,
+      detourDistanceKm,
+      score: buildRoutedFuelCandidateScore(candidate, detourDistanceKm, cheapestKnownPrice),
+    };
+  });
 
   const reachableCandidates = evaluatedCandidates
     .filter((candidate) => candidate.toFuelSection.distanceKm <= usableDistanceKm + 1)
@@ -620,29 +623,17 @@ export const planRoadTrip = async (input: PlannerInput, options?: PlannerOptions
     preview: makePreview(selectedRoute.ordered, allWaypoints, []),
   });
 
-  const routeSections: Array<RouteSection | null> = new Array(Math.max(0, allWaypoints.length - 1)).fill(null);
+  const completedRouteSections = await routeSequence(allWaypoints);
 
-  await Promise.all(
-    allWaypoints.slice(0, -1).map(async (waypoint, index) => {
-      const section = await routeBetween(waypoint, allWaypoints[index + 1]);
-      routeSections[index] = section;
+  completedRouteSections.forEach((section, index) => {
+    emitProgress(options, {
+      stage: "route",
+      message: `Routed leg ${index + 1} of ${completedRouteSections.length}: ${section.from.name} to ${section.to.name}.`,
+      preview: makePreview(selectedRoute.ordered, allWaypoints, completedRouteSections.slice(0, index + 1)),
+    });
+  });
 
-      emitProgress(options, {
-        stage: "route",
-        message: `Routed leg ${index + 1} of ${allWaypoints.length - 1}: ${waypoint.name} to ${allWaypoints[index + 1].name}.`,
-        preview: makePreview(
-          selectedRoute.ordered,
-          allWaypoints,
-          routeSections.filter((item): item is RouteSection => item !== null),
-        ),
-      });
-    }),
-  );
-
-  const completedRouteSections = routeSections.filter((item): item is RouteSection => item !== null);
-  const routedFuelSections = await Promise.all(
-    completedRouteSections.map(async (section) => buildRoutedFuelSection(section, input, options)),
-  );
+  const routedFuelSections = await mapInOrder(completedRouteSections, async (section) => buildRoutedFuelSection(section, input, options));
   const dailyPlans = await buildDailyPlans(allWaypoints, routedFuelSections, input, options);
   const totalDistanceKm = routedFuelSections.reduce((sum, section) => sum + section.distanceKm, 0);
   const totalDriveHours = routedFuelSections.reduce((sum, section) => sum + section.durationHours, 0);
