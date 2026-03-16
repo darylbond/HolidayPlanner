@@ -1,59 +1,91 @@
-import { useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
-import type { DestinationInput, PlannerInput } from "../types";
+import { useState } from "react";
+import type { DestinationInput, LocationConfirmTarget, PlannerInput, PlannerLocationInput } from "../types";
 
 type PlannerFormProps = {
-  initialValue: PlannerInput;
   isPlanning: boolean;
-  onPlan: (input: PlannerInput) => Promise<void>;
+  onAddDestination: () => void;
+  onChange: (input: PlannerInput) => void;
+  onOpenLocationConfirm: (target: LocationConfirmTarget) => void;
+  onPlanNow: () => Promise<void> | void;
+  onRemoveDestination: (destinationId: string) => void;
+  value: PlannerInput;
 };
 
-const createBlankDestination = (): DestinationInput => ({
-  id: crypto.randomUUID(),
-  name: "",
-  stayDays: 1,
-  desirability: 5,
-  notes: "",
-});
+type NumericPlannerField =
+  | "holidayDays"
+  | "maxDriveHoursPerDay"
+  | "fuelConsumptionLitresPer100Km"
+  | "fuelTankLitres";
 
-export const PlannerForm = ({ initialValue, isPlanning, onPlan }: PlannerFormProps) => {
-  const [formState, setFormState] = useState<PlannerInput>(initialValue);
+const describeLocation = (location: PlannerLocationInput) =>
+  location.coordinates ? "Map confirmed" : "Text only. Use Confirm on map for an explicit pin.";
 
-  const updateField = <Key extends keyof PlannerInput>(field: Key, value: PlannerInput[Key]) => {
-    setFormState((current) => ({
-      ...current,
-      [field]: value,
-    }));
+export const PlannerForm = ({
+  isPlanning,
+  onAddDestination,
+  onChange,
+  onOpenLocationConfirm,
+  onPlanNow,
+  onRemoveDestination,
+  value,
+}: PlannerFormProps) => {
+  const [isDestinationListOpen, setIsDestinationListOpen] = useState(true);
+
+  const updateField = <Key extends keyof PlannerInput>(field: Key, fieldValue: PlannerInput[Key]) => {
+    onChange({
+      ...value,
+      [field]: fieldValue,
+    });
+  };
+
+  const updateNamedLocation = (field: "start" | "end", name: string) => {
+    updateField(field, {
+      name,
+    } as PlannerInput[typeof field]);
   };
 
   const updateDestination = <Key extends keyof DestinationInput>(
     destinationId: string,
     field: Key,
-    value: DestinationInput[Key],
+    fieldValue: DestinationInput[Key],
   ) => {
-    setFormState((current) => ({
-      ...current,
-      destinations: current.destinations.map((destination) =>
+    onChange({
+      ...value,
+      destinations: value.destinations.map((destination) =>
         destination.id === destinationId
           ? {
               ...destination,
-              [field]: value,
+              [field]: fieldValue,
             }
           : destination,
       ),
-    }));
+    });
   };
 
-  const handleNumericField = (event: ChangeEvent<HTMLInputElement>, field: keyof PlannerInput) => {
-    updateField(field, Number(event.target.value) as PlannerInput[keyof PlannerInput]);
+  const updateDestinationLocation = (destinationId: string, name: string) => {
+    onChange({
+      ...value,
+      destinations: value.destinations.map((destination) =>
+        destination.id === destinationId
+          ? {
+              ...destination,
+              location: {
+                name,
+              },
+            }
+          : destination,
+      ),
+    });
+  };
+
+  const handleNumericField = (event: ChangeEvent<HTMLInputElement>, field: NumericPlannerField) => {
+    updateField(field, Number(event.target.value) as PlannerInput[NumericPlannerField]);
   };
 
   const submitForm = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    await onPlan({
-      ...formState,
-      destinations: formState.destinations.filter((destination) => destination.name.trim().length > 0),
-    });
+    await onPlanNow();
   };
 
   return (
@@ -63,19 +95,52 @@ export const PlannerForm = ({ initialValue, isPlanning, onPlan }: PlannerFormPro
         <h2>Road-trip inputs</h2>
         <p className="section-copy">
           Enter the route constraints, vehicle details, and candidate destinations. The planner fits the best mix of stops
-          into the available holiday length and then expands the route into daily travel segments.
+          into the available holiday length, re-runs automatically as you edit, and keeps the preview map in sync while it
+          routes each leg.
         </p>
       </div>
 
       <div className="field-grid two-column">
-        <label>
+        <label className="location-label">
           <span>Start point</span>
-          <input value={formState.start} onChange={(event) => updateField("start", event.target.value)} required />
+          <div className="location-input-row">
+            <input value={value.start.name} onChange={(event) => updateNamedLocation("start", event.target.value)} required />
+            <button
+              className="secondary-button compact-button"
+              onClick={() =>
+                onOpenLocationConfirm({
+                  kind: "start",
+                  label: "Start point",
+                  query: value.start.name,
+                })
+              }
+              type="button"
+            >
+              Confirm on map
+            </button>
+          </div>
+          <small>{describeLocation(value.start)}</small>
         </label>
 
-        <label>
+        <label className="location-label">
           <span>End point</span>
-          <input value={formState.end} onChange={(event) => updateField("end", event.target.value)} required />
+          <div className="location-input-row">
+            <input value={value.end.name} onChange={(event) => updateNamedLocation("end", event.target.value)} required />
+            <button
+              className="secondary-button compact-button"
+              onClick={() =>
+                onOpenLocationConfirm({
+                  kind: "end",
+                  label: "End point",
+                  query: value.end.name,
+                })
+              }
+              type="button"
+            >
+              Confirm on map
+            </button>
+          </div>
+          <small>{describeLocation(value.end)}</small>
         </label>
 
         <label>
@@ -83,7 +148,7 @@ export const PlannerForm = ({ initialValue, isPlanning, onPlan }: PlannerFormPro
           <input
             type="number"
             min="1"
-            value={formState.holidayDays}
+            value={value.holidayDays}
             onChange={(event) => handleNumericField(event, "holidayDays")}
             required
           />
@@ -95,7 +160,7 @@ export const PlannerForm = ({ initialValue, isPlanning, onPlan }: PlannerFormPro
             type="number"
             min="1"
             step="0.5"
-            value={formState.maxDriveHoursPerDay}
+            value={value.maxDriveHoursPerDay}
             onChange={(event) => handleNumericField(event, "maxDriveHoursPerDay")}
             required
           />
@@ -107,7 +172,7 @@ export const PlannerForm = ({ initialValue, isPlanning, onPlan }: PlannerFormPro
             type="number"
             min="1"
             step="0.1"
-            value={formState.fuelConsumptionLitresPer100Km}
+            value={value.fuelConsumptionLitresPer100Km}
             onChange={(event) => handleNumericField(event, "fuelConsumptionLitresPer100Km")}
             required
           />
@@ -119,7 +184,7 @@ export const PlannerForm = ({ initialValue, isPlanning, onPlan }: PlannerFormPro
             type="number"
             min="1"
             step="1"
-            value={formState.fuelTankLitres}
+            value={value.fuelTankLitres}
             onChange={(event) => handleNumericField(event, "fuelTankLitres")}
             required
           />
@@ -131,30 +196,38 @@ export const PlannerForm = ({ initialValue, isPlanning, onPlan }: PlannerFormPro
           <div>
             <p className="eyebrow">Stops</p>
             <h3>Candidate destinations</h3>
+            <p className="subtle-copy">
+              Add as many candidates as you need. The planner uses a fast heuristic, then keeps only the set that fits.
+            </p>
           </div>
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => updateField("destinations", [...formState.destinations, createBlankDestination()])}
-          >
-            Add destination
-          </button>
+          <div className="header-actions">
+            <button className="secondary-button" onClick={onAddDestination} type="button">
+              Add destination
+            </button>
+            <button className="ghost-button neutral-button" onClick={() => setIsDestinationListOpen((current) => !current)} type="button">
+              {isDestinationListOpen ? "Collapse" : "Expand"}
+            </button>
+          </div>
         </div>
 
-        <div className="destination-list">
-          {formState.destinations.map((destination, index) => (
+        <div className="destination-summary-row">
+          <span className="pill">{value.destinations.length} candidates</span>
+          <span className="pill">{value.destinations.filter((destination) => destination.location.coordinates).length} map-confirmed</span>
+        </div>
+
+        {isDestinationListOpen ? (
+          <div className="destination-list">
+            {value.destinations.map((destination, index) => (
             <article className="destination-card" key={destination.id}>
               <div className="destination-card-header">
-                <strong>Stop {index + 1}</strong>
+                <div>
+                  <strong>Stop {index + 1}</strong>
+                  <p className="destination-status">{describeLocation(destination.location)}</p>
+                </div>
                 <button
                   className="ghost-button"
                   type="button"
-                  onClick={() =>
-                    updateField(
-                      "destinations",
-                      formState.destinations.filter((item) => item.id !== destination.id),
-                    )
-                  }
+                  onClick={() => onRemoveDestination(destination.id)}
                 >
                   Remove
                 </button>
@@ -163,11 +236,27 @@ export const PlannerForm = ({ initialValue, isPlanning, onPlan }: PlannerFormPro
               <div className="field-grid destination-grid">
                 <label className="destination-name">
                   <span>Destination</span>
-                  <input
-                    value={destination.name}
-                    onChange={(event) => updateDestination(destination.id, "name", event.target.value)}
-                    placeholder="Example: Wilsons Promontory, VIC"
-                  />
+                  <div className="location-input-row">
+                    <input
+                      value={destination.location.name}
+                      onChange={(event) => updateDestinationLocation(destination.id, event.target.value)}
+                      placeholder="Example: Wilsons Promontory, VIC"
+                    />
+                    <button
+                      className="secondary-button compact-button"
+                      onClick={() =>
+                        onOpenLocationConfirm({
+                          kind: "destination",
+                          destinationId: destination.id,
+                          label: `Destination ${index + 1}`,
+                          query: destination.location.name,
+                        })
+                      }
+                      type="button"
+                    >
+                      Confirm on map
+                    </button>
+                  </div>
                 </label>
 
                 <label>
@@ -189,16 +278,14 @@ export const PlannerForm = ({ initialValue, isPlanning, onPlan }: PlannerFormPro
                     max="10"
                     step="1"
                     value={destination.desirability}
-                    onChange={(event) =>
-                      updateDestination(destination.id, "desirability", Number(event.target.value))
-                    }
+                    onChange={(event) => updateDestination(destination.id, "desirability", Number(event.target.value))}
                   />
                 </label>
 
                 <label className="destination-notes">
                   <span>Notes</span>
                   <textarea
-                    value={destination.notes}
+                    value={destination.notes ?? ""}
                     onChange={(event) => updateDestination(destination.id, "notes", event.target.value)}
                     rows={2}
                     placeholder="Optional notes for the stay"
@@ -206,12 +293,15 @@ export const PlannerForm = ({ initialValue, isPlanning, onPlan }: PlannerFormPro
                 </label>
               </div>
             </article>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
+      <p className="subtle-copy form-footer-copy">The planner refreshes automatically after edits. Use the button below to force an immediate rebuild.</p>
+
       <button className="primary-button" type="submit" disabled={isPlanning}>
-        {isPlanning ? "Planning route..." : "Build holiday plan"}
+        {isPlanning ? "Planning route..." : "Refresh now"}
       </button>
     </form>
   );

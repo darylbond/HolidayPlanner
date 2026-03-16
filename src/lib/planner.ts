@@ -1,17 +1,25 @@
-import { distanceAlongPathKm, slicePolylineByKm, haversineKm } from "./geo";
+import { distanceAlongPathKm, haversineKm, slicePolylineByKm } from "./geo";
 import { findNearbyCampsites, findPointsOfInterestAlongPath, geocodePlace, routeBetween } from "./osm";
-import type { DailyPlan, PlannerInput, ResolvedWaypoint, RouteSection, TripPlan } from "../types";
+import type {
+  DailyPlan,
+  PlannerInput,
+  PlanningPreview,
+  PlanningProgressUpdate,
+  PlannerLocationInput,
+  ResolvedWaypoint,
+  RouteSection,
+  TripPlan,
+} from "../types";
 
-const MAX_EXACT_DESTINATIONS = 8;
 const ROAD_DISTANCE_MULTIPLIER = 1.22;
 const AVERAGE_ROAD_SPEED_KMH = 75;
 
 type SearchResult = {
   ordered: ResolvedWaypoint[];
   score: number;
-  finishDriveHours: number;
-  finishDays: number;
-  mode: "exact" | "greedy";
+  estimatedDriveHours: number;
+  estimatedDriveDays: number;
+  mode: "fast";
 };
 
 type RouteChunk = {
@@ -33,18 +41,54 @@ const makeWaypointId = (label: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "") || "stop";
 
-const resolveInputWaypoints = async (input: PlannerInput) => {
-  const startCoordinates = await geocodePlace(input.start);
-  const endCoordinates = await geocodePlace(input.end);
+const estimateDriveDays = (hours: number, maxDriveHoursPerDay: number) => Math.max(1, Math.ceil(hours / maxDriveHoursPerDay));
+
+const makePreview = (
+  selectedDestinations: ResolvedWaypoint[],
+  allWaypoints: ResolvedWaypoint[],
+  routeSections: RouteSection[],
+): PlanningPreview => ({
+  selectedDestinations,
+  allWaypoints,
+  routeSections,
+  optimizationMode: "fast",
+});
+
+type PlannerOptions = {
+  onProgress?: (update: PlanningProgressUpdate) => void;
+};
+
+const emitProgress = (options: PlannerOptions | undefined, update: PlanningProgressUpdate) => {
+  options?.onProgress?.(update);
+};
+
+const resolveLocationCoordinates = async (location: PlannerLocationInput) => {
+  if (location.coordinates) {
+    return location.coordinates;
+  }
+
+  return geocodePlace(location.name.trim());
+};
+
+const resolveInputWaypoints = async (input: PlannerInput, options?: PlannerOptions) => {
+  emitProgress(options, {
+    stage: "resolve",
+    message: `Resolving ${input.destinations.filter((destination) => destination.location.name.trim().length > 0).length + 2} locations.`,
+  });
+
+  const [startCoordinates, endCoordinates] = await Promise.all([
+    resolveLocationCoordinates(input.start),
+    resolveLocationCoordinates(input.end),
+  ]);
 
   const destinations = await Promise.all(
     input.destinations
-      .filter((destination) => destination.name.trim().length > 0)
+      .filter((destination) => destination.location.name.trim().length > 0)
       .map(async (destination) => ({
         id: destination.id,
-        name: destination.name.trim(),
+        name: destination.location.name.trim(),
         kind: "destination" as const,
-        coordinates: await geocodePlace(destination.name.trim()),
+        coordinates: await resolveLocationCoordinates(destination.location),
         stayDays: Math.max(0, Math.round(destination.stayDays)),
         desirability: Math.max(1, Math.round(destination.desirability)),
         notes: destination.notes?.trim(),
@@ -52,8 +96,8 @@ const resolveInputWaypoints = async (input: PlannerInput) => {
   );
 
   const start: ResolvedWaypoint = {
-    id: `start-${makeWaypointId(input.start)}`,
-    name: input.start.trim(),
+    id: `start-${makeWaypointId(input.start.name)}`,
+    name: input.start.name.trim(),
     kind: "start",
     coordinates: startCoordinates,
     stayDays: 0,
@@ -61,146 +105,95 @@ const resolveInputWaypoints = async (input: PlannerInput) => {
   };
 
   const end: ResolvedWaypoint = {
-    id: `end-${makeWaypointId(input.end)}`,
-    name: input.end.trim(),
+    id: `end-${makeWaypointId(input.end.name)}`,
+    name: input.end.name.trim(),
     kind: "end",
     coordinates: endCoordinates,
     stayDays: 0,
     desirability: 0,
   };
 
+  emitProgress(options, {
+    stage: "resolve",
+    message: `Resolved start, end, and ${destinations.length} candidate destinations.`,
+  });
+
   return { start, end, destinations };
 };
 
-const searchExactRoute = (
+const searchFastInsertionRoute = (
   start: ResolvedWaypoint,
   end: ResolvedWaypoint,
   destinations: ResolvedWaypoint[],
   holidayDays: number,
   maxDriveHoursPerDay: number,
 ): SearchResult => {
-  let best: SearchResult = {
-    ordered: [],
-    score: -1,
-    finishDriveHours: Number.POSITIVE_INFINITY,
-    finishDays: Number.POSITIVE_INFINITY,
-    mode: "exact",
-  };
-
-  const visit = (
-    current: ResolvedWaypoint,
-    remaining: ResolvedWaypoint[],
-    ordered: ResolvedWaypoint[],
-    score: number,
-    daysUsed: number,
-    driveHoursUsed: number,
-  ) => {
-    const returnDriveHours = estimateDriveHours(current, end);
-    const finishDays = daysUsed + Math.ceil(returnDriveHours / maxDriveHoursPerDay);
-
-    if (finishDays <= holidayDays) {
-      const finishDriveHours = driveHoursUsed + returnDriveHours;
-
-      const shouldReplaceCurrentBest =
-        score > best.score ||
-        (score === best.score && ordered.length > best.ordered.length) ||
-        (score === best.score && ordered.length === best.ordered.length && finishDriveHours < best.finishDriveHours);
-
-      if (shouldReplaceCurrentBest) {
-        best = {
-          ordered: [...ordered],
-          score,
-          finishDriveHours,
-          finishDays,
-          mode: "exact",
-        };
-      }
-    }
-
-    remaining.forEach((candidate, candidateIndex) => {
-      const legDriveHours = estimateDriveHours(current, candidate);
-      const nextDaysUsed = daysUsed + Math.ceil(legDriveHours / maxDriveHoursPerDay) + candidate.stayDays;
-      const returnAfterCandidate = estimateDriveHours(candidate, end);
-
-      if (nextDaysUsed + Math.ceil(returnAfterCandidate / maxDriveHoursPerDay) > holidayDays) {
-        return;
-      }
-
-      const remainingWithoutCandidate = [...remaining.slice(0, candidateIndex), ...remaining.slice(candidateIndex + 1)];
-
-      visit(
-        candidate,
-        remainingWithoutCandidate,
-        [...ordered, candidate],
-        score + candidate.desirability,
-        nextDaysUsed,
-        driveHoursUsed + legDriveHours,
-      );
-    });
-  };
-
-  visit(start, destinations, [], 0, 0, 0);
-  return best;
-};
-
-const searchGreedyRoute = (
-  start: ResolvedWaypoint,
-  end: ResolvedWaypoint,
-  destinations: ResolvedWaypoint[],
-  holidayDays: number,
-  maxDriveHoursPerDay: number,
-): SearchResult => {
+  const route = [start, end];
   const remaining = [...destinations];
-  const ordered: ResolvedWaypoint[] = [];
   let score = 0;
-  let daysUsed = 0;
-  let driveHoursUsed = 0;
-  let current = start;
+  let totalDriveHours = estimateDriveHours(start, end);
+  let totalDriveDays = estimateDriveDays(totalDriveHours, maxDriveHoursPerDay);
+  let totalStayDays = 0;
 
   while (remaining.length > 0) {
     let bestCandidateIndex = -1;
-    let bestCandidateValue = Number.NEGATIVE_INFINITY;
+    let bestInsertionIndex = -1;
+    let bestValue = Number.NEGATIVE_INFINITY;
+    let bestDriveHoursDelta = 0;
+    let bestDriveDaysDelta = 0;
 
-    remaining.forEach((candidate, index) => {
-      const legDriveHours = estimateDriveHours(current, candidate);
-      const projectedDays = daysUsed + Math.ceil(legDriveHours / maxDriveHoursPerDay) + candidate.stayDays;
-      const returnDays = Math.ceil(estimateDriveHours(candidate, end) / maxDriveHoursPerDay);
+    remaining.forEach((candidate, candidateIndex) => {
+      for (let insertionIndex = 0; insertionIndex < route.length - 1; insertionIndex += 1) {
+        const previousStop = route[insertionIndex];
+        const nextStop = route[insertionIndex + 1];
+        const previousHours = estimateDriveHours(previousStop, nextStop);
+        const beforeHours = estimateDriveHours(previousStop, candidate);
+        const afterHours = estimateDriveHours(candidate, nextStop);
+        const driveHoursDelta = beforeHours + afterHours - previousHours;
+        const driveDaysDelta =
+          estimateDriveDays(beforeHours, maxDriveHoursPerDay) +
+          estimateDriveDays(afterHours, maxDriveHoursPerDay) -
+          estimateDriveDays(previousHours, maxDriveHoursPerDay);
+        const projectedTotalDays = totalStayDays + totalDriveDays + candidate.stayDays + driveDaysDelta;
 
-      if (projectedDays + returnDays > holidayDays) {
-        return;
-      }
+        if (projectedTotalDays > holidayDays) {
+          continue;
+        }
 
-      const desirabilityPerDay = candidate.desirability / Math.max(1, candidate.stayDays + legDriveHours);
-      const value = desirabilityPerDay * 10 - estimateDriveHours(candidate, end) * 0.25;
+        const value =
+          candidate.desirability * 1.5 -
+          driveHoursDelta * 1.15 -
+          candidate.stayDays * 0.45 +
+          candidate.desirability / Math.max(1, candidate.stayDays + driveHoursDelta + 0.5);
 
-      if (value > bestCandidateValue) {
-        bestCandidateValue = value;
-        bestCandidateIndex = index;
+        if (value > bestValue) {
+          bestValue = value;
+          bestCandidateIndex = candidateIndex;
+          bestInsertionIndex = insertionIndex;
+          bestDriveHoursDelta = driveHoursDelta;
+          bestDriveDaysDelta = driveDaysDelta;
+        }
       }
     });
 
-    if (bestCandidateIndex === -1) {
+    if (bestCandidateIndex === -1 || bestInsertionIndex === -1) {
       break;
     }
 
     const candidate = remaining.splice(bestCandidateIndex, 1)[0];
-    const legDriveHours = estimateDriveHours(current, candidate);
-
-    ordered.push(candidate);
+    route.splice(bestInsertionIndex + 1, 0, candidate);
     score += candidate.desirability;
-    daysUsed += Math.ceil(legDriveHours / maxDriveHoursPerDay) + candidate.stayDays;
-    driveHoursUsed += legDriveHours;
-    current = candidate;
+    totalDriveHours += bestDriveHoursDelta;
+    totalDriveDays += bestDriveDaysDelta;
+    totalStayDays += candidate.stayDays;
   }
 
-  const finalReturnDriveHours = estimateDriveHours(current, end);
-
   return {
-    ordered,
+    ordered: route.slice(1, -1),
     score,
-    finishDriveHours: driveHoursUsed + finalReturnDriveHours,
-    finishDays: daysUsed + Math.ceil(finalReturnDriveHours / maxDriveHoursPerDay),
-    mode: "greedy",
+    estimatedDriveHours: totalDriveHours,
+    estimatedDriveDays: totalDriveDays,
+    mode: "fast",
   };
 };
 
@@ -211,12 +204,15 @@ const chooseRoute = (
   holidayDays: number,
   maxDriveHoursPerDay: number,
 ) => {
-  const result =
-    destinations.length <= MAX_EXACT_DESTINATIONS
-      ? searchExactRoute(start, end, destinations, holidayDays, maxDriveHoursPerDay)
-      : searchGreedyRoute(start, end, destinations, holidayDays, maxDriveHoursPerDay);
+  const directRouteDays = estimateDriveDays(estimateDriveHours(start, end), maxDriveHoursPerDay);
 
-  if (result.finishDays > holidayDays) {
+  if (directRouteDays > holidayDays) {
+    throw new Error("The direct route does not fit within the holiday length and daily driving limit.");
+  }
+
+  const result = searchFastInsertionRoute(start, end, destinations, holidayDays, maxDriveHoursPerDay);
+
+  if (result.estimatedDriveDays + result.ordered.reduce((sum, waypoint) => sum + waypoint.stayDays, 0) > holidayDays) {
     throw new Error("The direct route does not fit within the holiday length and daily driving limit.");
   }
 
@@ -278,6 +274,7 @@ const buildDailyPlans = async (
   allWaypoints: ResolvedWaypoint[],
   routeSections: RouteSection[],
   input: PlannerInput,
+  options?: PlannerOptions,
 ) => {
   const rawDailyPlans: DailyPlan[] = [];
   let dayNumber = 1;
@@ -371,6 +368,8 @@ const buildDailyPlans = async (
   });
 
   const enrichedDailyPlans: DailyPlan[] = [];
+  const driveDays = rawDailyPlans.filter((dailyPlan) => dailyPlan.kind === "drive");
+  let enrichedDriveDayCount = 0;
 
   for (const dailyPlan of rawDailyPlans) {
     if (dailyPlan.kind === "stay") {
@@ -391,6 +390,12 @@ const buildDailyPlans = async (
       dailyPlan.notes.push("Some live map enrichments were unavailable for this day. The route itself is still usable.");
     }
 
+    enrichedDriveDayCount += 1;
+    emitProgress(options, {
+      stage: "enrich",
+      message: `Added stay suggestions and POIs for ${enrichedDriveDayCount} of ${driveDays.length} drive days.`,
+    });
+
     enrichedDailyPlans.push({
       ...dailyPlan,
       campsites,
@@ -401,22 +406,46 @@ const buildDailyPlans = async (
   return enrichedDailyPlans;
 };
 
-export const planRoadTrip = async (input: PlannerInput): Promise<TripPlan> => {
-  const { start, end, destinations } = await resolveInputWaypoints(input);
+export const planRoadTrip = async (input: PlannerInput, options?: PlannerOptions): Promise<TripPlan> => {
+  const { start, end, destinations } = await resolveInputWaypoints(input, options);
   const selectedRoute = chooseRoute(start, end, destinations, input.holidayDays, input.maxDriveHoursPerDay);
   const allWaypoints = [start, ...selectedRoute.ordered, end];
-  const routeSections = await Promise.all(
-    allWaypoints.slice(0, -1).map((waypoint, index) => routeBetween(waypoint, allWaypoints[index + 1])),
+
+  emitProgress(options, {
+    stage: "optimize",
+    message: `Selected ${selectedRoute.ordered.length} destinations using the fast insertion optimizer.`,
+    preview: makePreview(selectedRoute.ordered, allWaypoints, []),
+  });
+
+  const routeSections: Array<RouteSection | null> = new Array(Math.max(0, allWaypoints.length - 1)).fill(null);
+
+  await Promise.all(
+    allWaypoints.slice(0, -1).map(async (waypoint, index) => {
+      const section = await routeBetween(waypoint, allWaypoints[index + 1]);
+      routeSections[index] = section;
+
+      emitProgress(options, {
+        stage: "route",
+        message: `Routed leg ${index + 1} of ${allWaypoints.length - 1}: ${waypoint.name} to ${allWaypoints[index + 1].name}.`,
+        preview: makePreview(
+          selectedRoute.ordered,
+          allWaypoints,
+          routeSections.filter((item): item is RouteSection => item !== null),
+        ),
+      });
+    }),
   );
-  const dailyPlans = await buildDailyPlans(allWaypoints, routeSections, input);
-  const totalDistanceKm = routeSections.reduce((sum, section) => sum + section.distanceKm, 0);
-  const totalDriveHours = routeSections.reduce((sum, section) => sum + section.durationHours, 0);
+
+  const completedRouteSections = routeSections.filter((item): item is RouteSection => item !== null);
+  const dailyPlans = await buildDailyPlans(allWaypoints, completedRouteSections, input, options);
+  const totalDistanceKm = completedRouteSections.reduce((sum, section) => sum + section.distanceKm, 0);
+  const totalDriveHours = completedRouteSections.reduce((sum, section) => sum + section.durationHours, 0);
   const totalStayDays = selectedRoute.ordered.reduce((sum, waypoint) => sum + waypoint.stayDays, 0);
 
-  return {
+  const result: TripPlan = {
     selectedDestinations: selectedRoute.ordered,
     allWaypoints,
-    routeSections,
+    routeSections: completedRouteSections,
     dailyPlans,
     totalDriveHours: roundToOneDecimal(totalDriveHours),
     totalDistanceKm: roundToOneDecimal(totalDistanceKm),
@@ -425,4 +454,12 @@ export const planRoadTrip = async (input: PlannerInput): Promise<TripPlan> => {
     totalFuelLitres: roundToOneDecimal((totalDistanceKm * input.fuelConsumptionLitresPer100Km) / 100),
     optimizationMode: selectedRoute.mode,
   };
+
+  emitProgress(options, {
+    stage: "complete",
+    message: `Plan ready with ${dailyPlans.length} days across ${selectedRoute.ordered.length} destinations.`,
+    preview: makePreview(selectedRoute.ordered, allWaypoints, completedRouteSections),
+  });
+
+  return result;
 };

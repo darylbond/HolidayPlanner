@@ -3,17 +3,22 @@ export type Coordinates = {
   lng: number;
 };
 
+export type PlannerLocationInput = {
+  name: string;
+  coordinates?: Coordinates;
+};
+
 export type DestinationInput = {
   id: string;
-  name: string;
+  location: PlannerLocationInput;
   stayDays: number;
   desirability: number;
   notes?: string;
 };
 
 export type PlannerInput = {
-  start: string;
-  end: string;
+  start: PlannerLocationInput;
+  end: PlannerLocationInput;
   holidayDays: number;
   maxDriveHoursPerDay: number;
   fuelConsumptionLitresPer100Km: number;
@@ -58,6 +63,42 @@ export type PointOfInterest = {
   osmUrl: string;
 };
 
+export type LocationCandidate = {
+  name: string;
+  coordinates: Coordinates;
+};
+
+export type LocationTargetKind = "start" | "end" | "destination";
+
+export type LocationConfirmTarget = {
+  kind: LocationTargetKind;
+  destinationId?: string;
+  label: string;
+  query: string;
+};
+
+export type PlanningStage = "resolve" | "optimize" | "route" | "enrich" | "complete";
+
+export type PlanningPreview = {
+  selectedDestinations: ResolvedWaypoint[];
+  allWaypoints: ResolvedWaypoint[];
+  routeSections: RouteSection[];
+  optimizationMode: "fast";
+};
+
+export type PlanningProgressUpdate = {
+  stage: PlanningStage;
+  message: string;
+  preview?: PlanningPreview;
+};
+
+export type PlannerLogEntry = {
+  id: string;
+  stage: PlanningStage;
+  message: string;
+  timestamp: string;
+};
+
 export type DailyPlan = {
   dayNumber: number;
   title: string;
@@ -86,5 +127,5 @@ export type TripPlan = {
   totalStayDays: number;
   totalHolidayDays: number;
   totalFuelLitres: number;
-  optimizationMode: "exact" | "greedy";
+  optimizationMode: "fast";
 };

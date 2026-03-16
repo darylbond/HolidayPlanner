@@ -1,5 +1,12 @@
 import { dedupeCoordinates, distanceFromPointToPathKm, getBoundingBox, haversineKm } from "./geo";
-import type { CampsiteOption, Coordinates, PointOfInterest, ResolvedWaypoint, RouteSection } from "../types";
+import type {
+  CampsiteOption,
+  Coordinates,
+  LocationCandidate,
+  PointOfInterest,
+  ResolvedWaypoint,
+  RouteSection,
+} from "../types";
 
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 const OSRM_URL = "https://router.project-osrm.org/route/v1/driving";
@@ -8,6 +15,7 @@ const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
 type NominatimResult = {
   lat: string;
   lon: string;
+  display_name: string;
 };
 
 type OverpassElement = {
@@ -31,6 +39,29 @@ type OSRMResponse = {
       coordinates: [number, number][];
     };
   }>;
+};
+
+const geocodeCache = new Map<string, LocationCandidate[]>();
+const reverseGeocodeCache = new Map<string, LocationCandidate>();
+const routeCache = new Map<string, RouteSection>();
+const campsiteCache = new Map<string, CampsiteOption[]>();
+const poiCache = new Map<string, PointOfInterest[]>();
+
+const roundCoordinate = (value: number) => Math.round(value * 100000) / 100000;
+
+const makeCoordinateKey = (coordinates: Coordinates) => `${roundCoordinate(coordinates.lat)},${roundCoordinate(coordinates.lng)}`;
+
+const makeRouteCacheKey = (from: ResolvedWaypoint, to: ResolvedWaypoint) =>
+  `${makeCoordinateKey(from.coordinates)}->${makeCoordinateKey(to.coordinates)}`;
+
+const fetchJson = async <Payload>(url: string, init?: RequestInit) => {
+  const response = await fetch(url, init);
+
+  if (!response.ok) {
+    throw new Error(`Request failed with ${response.status}.`);
+  }
+
+  return (await response.json()) as Payload;
 };
 
 const overpassFetch = async (query: string) => {
@@ -63,39 +94,83 @@ const getElementCoordinates = (element: OverpassElement): Coordinates | null => 
 
 const buildOsmUrl = (element: OverpassElement) => `https://www.openstreetmap.org/${element.type}/${element.id}`;
 
-export const geocodePlace = async (query: string) => {
-  const url = `${NOMINATIM_URL}?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`;
-  const response = await fetch(url, {
+export const searchPlaceCandidates = async (query: string, limit = 5): Promise<LocationCandidate[]> => {
+  const trimmedQuery = query.trim();
+
+  if (!trimmedQuery) {
+    return [];
+  }
+
+  const cacheKey = `${trimmedQuery.toLowerCase()}::${limit}`;
+  const cached = geocodeCache.get(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
+  const url = `${NOMINATIM_URL}?format=jsonv2&limit=${limit}&q=${encodeURIComponent(trimmedQuery)}`;
+  const results = await fetchJson<NominatimResult[]>(url, {
     headers: {
       Accept: "application/json",
     },
   });
 
-  if (!response.ok) {
-    throw new Error(`Geocoding request failed for ${query}.`);
-  }
+  const candidates = results.map((result) => ({
+    name: result.display_name,
+    coordinates: {
+      lat: Number(result.lat),
+      lng: Number(result.lon),
+    },
+  }));
 
-  const results = (await response.json()) as NominatimResult[];
+  geocodeCache.set(cacheKey, candidates);
+  return candidates;
+};
 
-  if (results.length === 0) {
+export const geocodePlace = async (query: string) => {
+  const candidates = await searchPlaceCandidates(query, 1);
+
+  if (candidates.length === 0) {
     throw new Error(`Could not find a location for ${query}.`);
   }
 
-  return {
-    lat: Number(results[0].lat),
-    lng: Number(results[0].lon),
+  return candidates[0].coordinates;
+};
+
+export const reverseGeocodePlace = async (coordinates: Coordinates): Promise<LocationCandidate> => {
+  const cacheKey = makeCoordinateKey(coordinates);
+  const cached = reverseGeocodeCache.get(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${coordinates.lat}&lon=${coordinates.lng}`;
+  const result = await fetchJson<{ display_name?: string }>(url, {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  const candidate = {
+    name: result.display_name ?? `Pinned ${coordinates.lat.toFixed(4)}, ${coordinates.lng.toFixed(4)}`,
+    coordinates,
   };
+
+  reverseGeocodeCache.set(cacheKey, candidate);
+  return candidate;
 };
 
 export const routeBetween = async (from: ResolvedWaypoint, to: ResolvedWaypoint): Promise<RouteSection> => {
-  const url = `${OSRM_URL}/${from.coordinates.lng},${from.coordinates.lat};${to.coordinates.lng},${to.coordinates.lat}?overview=full&geometries=geojson`;
-  const response = await fetch(url);
+  const cacheKey = makeRouteCacheKey(from, to);
+  const cached = routeCache.get(cacheKey);
 
-  if (!response.ok) {
-    throw new Error(`Routing request failed between ${from.name} and ${to.name}.`);
+  if (cached) {
+    return cached;
   }
 
-  const payload = (await response.json()) as OSRMResponse;
+  const url = `${OSRM_URL}/${from.coordinates.lng},${from.coordinates.lat};${to.coordinates.lng},${to.coordinates.lat}?overview=full&geometries=geojson`;
+  const payload = await fetchJson<OSRMResponse>(url);
 
   if (payload.code !== "Ok" || payload.routes.length === 0) {
     throw new Error(`No route found between ${from.name} and ${to.name}.`);
@@ -109,7 +184,7 @@ export const routeBetween = async (from: ResolvedWaypoint, to: ResolvedWaypoint)
     })),
   );
 
-  return {
+  const section = {
     id: `${from.id}-${to.id}`,
     from,
     to,
@@ -117,6 +192,9 @@ export const routeBetween = async (from: ResolvedWaypoint, to: ResolvedWaypoint)
     durationHours: route.duration / 3600,
     geometry,
   };
+
+  routeCache.set(cacheKey, section);
+  return section;
 };
 
 const formatCampsiteDescription = (tags: Record<string, string> | undefined) => {
@@ -135,6 +213,13 @@ const formatCampsiteDescription = (tags: Record<string, string> | undefined) => 
 };
 
 export const findNearbyCampsites = async (stop: Coordinates): Promise<CampsiteOption[]> => {
+  const cacheKey = makeCoordinateKey(stop);
+  const cached = campsiteCache.get(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
   const query = `
 [out:json][timeout:20];
 (
@@ -147,7 +232,7 @@ out center 40;
 
   const payload = await overpassFetch(query);
 
-  return payload.elements
+  const campsites = payload.elements
     .map((element) => {
       const coordinates = getElementCoordinates(element);
 
@@ -177,6 +262,9 @@ out center 40;
       return left.distanceKm - right.distanceKm;
     })
     .slice(0, 4);
+
+  campsiteCache.set(cacheKey, campsites);
+  return campsites;
 };
 
 const inferPoiCategory = (tags: Record<string, string> | undefined) => {
@@ -193,6 +281,13 @@ export const findPointsOfInterestAlongPath = async (path: Coordinates[]): Promis
   }
 
   const { south, west, north, east } = getBoundingBox(path);
+  const cacheKey = `${roundCoordinate(south)},${roundCoordinate(west)},${roundCoordinate(north)},${roundCoordinate(east)}`;
+  const cached = poiCache.get(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
   const query = `
 [out:json][timeout:25];
 (
@@ -214,7 +309,7 @@ out center 80;
   const payload = await overpassFetch(query);
   const seen = new Set<string>();
 
-  return payload.elements
+  const pois = payload.elements
     .map((element) => {
       const coordinates = getElementCoordinates(element);
 
@@ -241,4 +336,7 @@ out center 80;
     .filter((poi): poi is PointOfInterest => poi !== null)
     .sort((left, right) => left.distanceFromRouteKm - right.distanceFromRouteKm)
     .slice(0, 5);
+
+  poiCache.set(cacheKey, pois);
+  return pois;
 };

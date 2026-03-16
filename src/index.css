@@ -79,7 +79,9 @@ a {
 .section-header h2,
 .panel-heading h2,
 .itinerary-panel h2,
-.map-panel h2 {
+.map-panel h2,
+.activity-panel h2,
+.dialog-card h2 {
   margin: 0;
   font-family: "Fraunces", serif;
   line-height: 1.05;
@@ -118,6 +120,7 @@ a {
 .info-card,
 .map-panel,
 .itinerary-panel,
+.activity-panel,
 .placeholder-panel {
   border: 1px solid rgba(28, 45, 44, 0.08);
   border-radius: 1.5rem;
@@ -130,6 +133,7 @@ a {
 .itinerary-panel,
 .map-panel,
 .info-card,
+.activity-panel,
 .placeholder-panel {
   padding: 1.4rem;
 }
@@ -148,10 +152,33 @@ a {
   gap: 0.45rem;
 }
 
+.planner-form small {
+  color: #667279;
+}
+
 .field-grid span,
 .destination-card span {
   font-size: 0.85rem;
   color: #44525a;
+}
+
+.location-label {
+  align-content: start;
+}
+
+.location-input-row,
+.header-actions,
+.dialog-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.location-input-row {
+  align-items: center;
+}
+
+.location-input-row input {
+  flex: 1 1 auto;
 }
 
 input,
@@ -184,6 +211,13 @@ textarea:focus {
   gap: 1rem;
 }
 
+.destination-summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin: 0.85rem 0 1rem;
+}
+
 .destination-list {
   display: grid;
   gap: 1rem;
@@ -203,6 +237,13 @@ textarea:focus {
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
+}
+
+.destination-status,
+.form-footer-copy,
+.map-help-copy {
+  margin: 0;
+  color: #667279;
 }
 
 .destination-grid {
@@ -250,10 +291,20 @@ textarea:focus {
   font-weight: 600;
 }
 
+.compact-button {
+  padding: 0.75rem 0.95rem;
+  white-space: nowrap;
+}
+
 .ghost-button {
   padding: 0.55rem 0.9rem;
   background: rgba(185, 28, 28, 0.08);
   color: #b91c1c;
+}
+
+.neutral-button {
+  background: rgba(71, 85, 105, 0.1);
+  color: #334155;
 }
 
 .info-card ul {
@@ -274,11 +325,23 @@ textarea:focus {
   margin-top: 1rem;
   overflow: hidden;
   border-radius: 1.1rem;
+  position: relative;
 }
 
 .map-canvas {
   width: 100%;
   height: min(34rem, 62vh);
+}
+
+.map-popup-actions {
+  display: grid;
+  gap: 0.55rem;
+  min-width: 12rem;
+}
+
+.popup-button {
+  width: 100%;
+  justify-content: center;
 }
 
 .map-placeholder,
@@ -361,6 +424,76 @@ textarea:focus {
   gap: 1rem;
 }
 
+.activity-panel {
+  padding-top: 0.85rem;
+}
+
+.activity-panel summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  cursor: pointer;
+}
+
+.activity-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.log-status {
+  border-radius: 999px;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.log-status.live {
+  background: rgba(217, 72, 15, 0.12);
+  color: #b45309;
+}
+
+.log-status.idle {
+  background: rgba(15, 118, 110, 0.1);
+  color: #0f766e;
+}
+
+.activity-list {
+  display: grid;
+  gap: 0.8rem;
+  margin-top: 1rem;
+}
+
+.activity-entry {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.9rem 1rem;
+  border-radius: 1rem;
+  background: rgba(248, 250, 252, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.activity-entry p,
+.activity-entry strong {
+  margin: 0;
+}
+
+.activity-entry p {
+  color: #667279;
+  text-transform: capitalize;
+}
+
+.activity-entry-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.activity-entry-header span {
+  color: #667279;
+  white-space: nowrap;
+}
+
 .day-card {
   display: grid;
   gap: 0.85rem;
@@ -407,6 +540,93 @@ textarea:focus {
   text-align: right;
 }
 
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(10px);
+}
+
+.dialog-card {
+  width: min(70rem, 100%);
+  max-height: min(90vh, 60rem);
+  overflow: auto;
+  border-radius: 1.5rem;
+  background: #fefcf8;
+  box-shadow: 0 32px 80px rgba(15, 23, 42, 0.28);
+  padding: 1.4rem;
+}
+
+.dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.dialog-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(18rem, 0.9fr);
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.dialog-map-frame {
+  overflow: hidden;
+  border-radius: 1.1rem;
+}
+
+.dialog-map {
+  width: 100%;
+  height: 22rem;
+}
+
+.candidate-list {
+  display: grid;
+  gap: 0.75rem;
+  align-content: start;
+  max-height: 22rem;
+  overflow: auto;
+}
+
+.candidate-option {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.95rem 1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(255, 255, 255, 0.9);
+  text-align: left;
+}
+
+.candidate-option.selected {
+  border-color: rgba(217, 72, 15, 0.36);
+  box-shadow: 0 12px 24px rgba(217, 72, 15, 0.12);
+}
+
+.candidate-option strong,
+.candidate-option span {
+  margin: 0;
+}
+
+.candidate-option span {
+  color: #667279;
+}
+
+.dialog-actions {
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
+.dialog-actions .primary-button,
+.dialog-actions .secondary-button {
+  margin-top: 0;
+}
+
 @media (max-width: 1100px) {
   .app-layout {
     grid-template-columns: 1fr;
@@ -429,8 +649,16 @@ textarea:focus {
 
   .two-column,
   .destination-grid,
-  .metric-strip {
+  .metric-strip,
+  .dialog-grid {
     grid-template-columns: 1fr;
+  }
+
+  .location-input-row,
+  .header-actions,
+  .dialog-actions,
+  .activity-entry-header {
+    flex-direction: column;
   }
 
   .destination-name,
@@ -445,5 +673,9 @@ textarea:focus {
 
   .map-canvas {
     height: 22rem;
+  }
+
+  .dialog-card {
+    padding: 1rem;
   }
 }
