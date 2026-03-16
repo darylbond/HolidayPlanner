@@ -200,7 +200,7 @@ function App() {
 
       setPlan(result);
       setPreview(buildPreviewFromPlan(result));
-      setSelectedDay((current) => result.dailyPlans.find((day) => day.dayNumber === current?.dayNumber) ?? result.dailyPlans[0] ?? null);
+      setSelectedDay((current) => (current ? result.dailyPlans.find((day) => day.dayNumber === current.dayNumber) ?? null : null));
     } catch (error) {
       if (requestId !== activePlanningRequest.current) {
         return;
@@ -369,6 +369,10 @@ function App() {
     appendLog("optimize", "Removed a candidate destination.");
   };
 
+  const handleSelectDay = (day: DailyPlan) => {
+    setSelectedDay((current) => (current?.dayNumber === day.dayNumber ? null : day));
+  };
+
   return (
     <div className="page-shell">
       <div className="hero-backdrop" />
@@ -411,10 +415,11 @@ function App() {
         <section className="right-column">
           {errorMessage ? <div className="error-banner">{errorMessage}</div> : null}
           <TripMap
+            onClearSelection={() => setSelectedDay(null)}
             isPlanning={isPlanning}
             onMapAction={handleMapAction}
             onRemoveDestination={handleRemoveDestination}
-            onSelectDay={setSelectedDay}
+            onSelectDay={handleSelectDay}
             plan={plan}
             plannerInput={plannerInput}
             preview={preview}
@@ -422,7 +427,8 @@ function App() {
           />
           <ActivityLogPanel isPlanning={isPlanning} logEntries={activityLog} />
           <ItineraryPanel
-            onSelectDay={setSelectedDay}
+            onClearSelection={() => setSelectedDay(null)}
+            onSelectDay={handleSelectDay}
             plan={plan}
             selectedDayNumber={selectedDay?.dayNumber ?? null}
           />

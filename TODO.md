@@ -1,3 +1,5 @@
-- [x] add fuel stop information with simple optimisation of fuel stop points
-- [x] allow refinement on map when confirming location
-- [x] if the user is interacting with the map don't jump it around
+- [x] confirm on map doesn't work anymore - brings up blank page
+- [x] editing start and end point seemed to discard the destinations even though they were still listed
+- [x] keep track of fuel consumption over days
+- [x] clicking on a segment in the map highlights it and brings it up beside the map, clicking of a section clears it, all itinerary items collapsed unless clicked on, collapse again if something else is clicked
+- [x] right click options in map should not reset map view

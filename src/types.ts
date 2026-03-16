@@ -117,6 +117,7 @@ export type DailyPlan = {
   driveHours: number;
   distanceKm: number;
   fuelUsedLitres: number;
+  cumulativeFuelUsedLitres: number;
   refuelStops: number;
   fuelStops: FuelStop[];
   overnightStop?: ResolvedWaypoint;

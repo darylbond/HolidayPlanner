@@ -19,7 +19,7 @@ type NumericPlannerField =
   | "fuelTankLitres";
 
 const describeLocation = (location: PlannerLocationInput) =>
-  location.coordinates ? "Map confirmed" : "Text only. Use Confirm on map for an explicit pin.";
+  location.coordinates ? "Pinned coordinates retained. Reconfirm on map if you changed the place text." : "Text only. Use Confirm on map for an explicit pin.";
 
 export const PlannerForm = ({
   isPlanning,
@@ -52,6 +52,7 @@ export const PlannerForm = ({
   const updateNamedLocation = (field: "start" | "end", name: string) => {
     updateField(field, {
       name,
+      coordinates: value[field].coordinates,
     } as PlannerInput[typeof field]);
   };
 
@@ -82,6 +83,7 @@ export const PlannerForm = ({
               ...destination,
               location: {
                 name,
+                coordinates: destination.location.coordinates,
               },
             }
           : destination,

@@ -22,9 +22,18 @@ const FitCandidates = ({ candidates }: { candidates: LocationCandidate[] }) => {
       return;
     }
 
-    map.fitBounds(candidates.map((candidate) => [candidate.coordinates.lat, candidate.coordinates.lng] as LatLngTuple), {
-      padding: [28, 28],
-    });
+    window.setTimeout(() => {
+      map.invalidateSize();
+
+      if (candidates.length === 1) {
+        map.setView([candidates[0].coordinates.lat, candidates[0].coordinates.lng], 11);
+        return;
+      }
+
+      map.fitBounds(candidates.map((candidate) => [candidate.coordinates.lat, candidate.coordinates.lng] as LatLngTuple), {
+        padding: [28, 28],
+      });
+    }, 0);
   }, [candidates, map]);
 
   return null;
@@ -102,7 +111,7 @@ export const LocationConfirmDialog = ({
         {candidates.length > 0 ? (
           <div className="dialog-grid">
             <div className="dialog-map-frame">
-              <MapContainer center={[-35.0, 148.0]} className="dialog-map" zoom={5} scrollWheelZoom>
+              <MapContainer center={[-35.0, 148.0]} className="dialog-map" key={`${query}-${candidates.length}`} zoom={5} scrollWheelZoom>
                 <TileLayer
                   attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

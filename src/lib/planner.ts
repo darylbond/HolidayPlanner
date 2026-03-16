@@ -261,16 +261,6 @@ const splitRouteSection = (section: RouteSection, maxDriveHoursPerDay: number): 
   return chunks;
 };
 
-const calculateRefuelStops = (distanceKm: number, fuelConsumptionLitresPer100Km: number, fuelTankLitres: number) => {
-  const tankRangeKm = (fuelTankLitres / fuelConsumptionLitresPer100Km) * 100;
-
-  if (!Number.isFinite(tankRangeKm) || tankRangeKm <= 0) {
-    return 0;
-  }
-
-  return Math.max(0, Math.ceil(distanceKm / tankRangeKm) - 1);
-};
-
 const buildFuelStops = (
   geometry: RouteSection["geometry"],
   distanceKm: number,
@@ -311,6 +301,7 @@ const buildDailyPlans = async (
 ) => {
   const rawDailyPlans: DailyPlan[] = [];
   let dayNumber = 1;
+  let cumulativeFuelUsedLitres = 0;
 
   routeSections.forEach((section, sectionIndex) => {
     const targetWaypoint = allWaypoints[sectionIndex + 1];
@@ -338,6 +329,7 @@ const buildDailyPlans = async (
       }
 
       const fuelUsedLitres = (chunk.distanceKm * input.fuelConsumptionLitresPer100Km) / 100;
+      cumulativeFuelUsedLitres += fuelUsedLitres;
       const fuelStops = buildFuelStops(
         chunk.geometry,
         chunk.distanceKm,
@@ -371,6 +363,7 @@ const buildDailyPlans = async (
         driveHours: roundToOneDecimal(chunk.durationHours),
         distanceKm: roundToOneDecimal(chunk.distanceKm),
         fuelUsedLitres: roundToOneDecimal(fuelUsedLitres),
+        cumulativeFuelUsedLitres: roundToOneDecimal(cumulativeFuelUsedLitres),
         refuelStops: fuelStops.length,
         fuelStops,
         overnightStop,
@@ -396,6 +389,7 @@ const buildDailyPlans = async (
           driveHours: 0,
           distanceKm: 0,
           fuelUsedLitres: 0,
+          cumulativeFuelUsedLitres: roundToOneDecimal(cumulativeFuelUsedLitres),
           refuelStops: 0,
           fuelStops: [],
           destinationStop: targetWaypoint,

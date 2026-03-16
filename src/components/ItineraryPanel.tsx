@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
 import type { DailyPlan, TripPlan } from "../types";
 
 type ItineraryPanelProps = {
+  onClearSelection: () => void;
   plan: TripPlan | null;
   selectedDayNumber: number | null;
   onSelectDay: (day: DailyPlan) => void;
@@ -9,20 +9,7 @@ type ItineraryPanelProps = {
 
 const formatBadge = (value: string) => <span className="pill">{value}</span>;
 
-export const ItineraryPanel = ({ plan, selectedDayNumber, onSelectDay }: ItineraryPanelProps) => {
-  const [expandedDays, setExpandedDays] = useState<Record<number, boolean>>({});
-
-  useEffect(() => {
-    if (selectedDayNumber === null) {
-      return;
-    }
-
-    setExpandedDays((current) => ({
-      ...current,
-      [selectedDayNumber]: true,
-    }));
-  }, [selectedDayNumber]);
-
+export const ItineraryPanel = ({ onClearSelection, plan, selectedDayNumber, onSelectDay }: ItineraryPanelProps) => {
   if (!plan) {
     return (
       <section className="itinerary-panel placeholder-panel">
@@ -66,7 +53,7 @@ export const ItineraryPanel = ({ plan, selectedDayNumber, onSelectDay }: Itinera
         {plan.dailyPlans.map((day) => (
           <article className={`day-card ${selectedDayNumber === day.dayNumber ? "selected" : ""}`} key={day.dayNumber}>
             <div className="day-card-header">
-              <button className="day-card-summary" onClick={() => onSelectDay(day)} type="button">
+              <button className="day-card-summary" onClick={() => (selectedDayNumber === day.dayNumber ? onClearSelection() : onSelectDay(day))} type="button">
                 <div>
                   <p className="day-label">Day {day.dayNumber}</p>
                   <h3>{day.title}</h3>
@@ -76,31 +63,28 @@ export const ItineraryPanel = ({ plan, selectedDayNumber, onSelectDay }: Itinera
               <div className="day-card-header-actions">
                 <button
                   className="ghost-button neutral-button"
-                  onClick={() =>
-                    setExpandedDays((current) => ({
-                      ...current,
-                      [day.dayNumber]: !(current[day.dayNumber] ?? selectedDayNumber === day.dayNumber),
-                    }))
-                  }
+                  onClick={() => (selectedDayNumber === day.dayNumber ? onClearSelection() : onSelectDay(day))}
                   type="button"
                 >
-                  {(expandedDays[day.dayNumber] ?? selectedDayNumber === day.dayNumber) ? "Collapse" : "Expand"}
+                  {selectedDayNumber === day.dayNumber ? "Collapse" : "Expand"}
                 </button>
               </div>
             </div>
 
-            {(expandedDays[day.dayNumber] ?? selectedDayNumber === day.dayNumber) ? (
+            {selectedDayNumber === day.dayNumber ? (
               <div className="day-card-body">
                 {day.kind === "drive" ? (
                   <div className="day-metrics">
                     <span>{day.driveHours}h driving</span>
                     <span>{day.distanceKm} km</span>
                     <span>{day.fuelUsedLitres} L fuel</span>
+                    <span>{day.cumulativeFuelUsedLitres} L trip total</span>
                     <span>{day.refuelStops} refuels</span>
                   </div>
                 ) : (
                   <div className="day-metrics">
                     <span>Non-driving day</span>
+                    <span>{day.cumulativeFuelUsedLitres} L trip total</span>
                   </div>
                 )}
 

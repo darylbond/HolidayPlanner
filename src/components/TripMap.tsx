@@ -4,6 +4,7 @@ import type { LatLngTuple } from "leaflet";
 import type { Coordinates, DailyPlan, PlannerInput, PlanningPreview, TripPlan } from "../types";
 
 type TripMapProps = {
+  onClearSelection: () => void;
   isPlanning: boolean;
   onMapAction: (kind: "start" | "end" | "destination", coordinates: Coordinates) => Promise<void> | void;
   onRemoveDestination: (destinationId: string) => void;
@@ -80,6 +81,7 @@ const MapInteractionEvents = ({
 };
 
 export const TripMap = ({
+  onClearSelection,
   isPlanning,
   onMapAction,
   onRemoveDestination,
@@ -157,8 +159,14 @@ export const TripMap = ({
           />
           <FitRoute enabled={autoFitEnabled} points={fitPoints} />
           <MapInteractionEvents
-            onContextMenu={setContextCoordinates}
-            onDismiss={() => setContextCoordinates(null)}
+            onContextMenu={(coordinates) => {
+              setAutoFitEnabled(false);
+              setContextCoordinates(coordinates);
+            }}
+            onDismiss={() => {
+              setContextCoordinates(null);
+              onClearSelection();
+            }}
             onUserInteract={() => setAutoFitEnabled(false)}
           />
 
@@ -173,7 +181,14 @@ export const TripMap = ({
                   <Polyline
                     color={isSelected ? "#ef4444" : "#165dff"}
                     eventHandlers={{
-                      click: () => onSelectDay(day),
+                      click: (event) => {
+                        event.originalEvent.stopPropagation();
+                        if (isSelected) {
+                          onClearSelection();
+                        } else {
+                          onSelectDay(day);
+                        }
+                      },
                     }}
                     key={day.dayNumber}
                     opacity={isSelected ? 0.95 : 0.42}
@@ -308,6 +323,7 @@ export const TripMap = ({
                 <button
                   className="secondary-button popup-button"
                   onClick={() => {
+                    setAutoFitEnabled(false);
                     void onMapAction("destination", contextCoordinates);
                     setContextCoordinates(null);
                   }}
@@ -318,6 +334,7 @@ export const TripMap = ({
                 <button
                   className="secondary-button popup-button"
                   onClick={() => {
+                    setAutoFitEnabled(false);
                     void onMapAction("start", contextCoordinates);
                     setContextCoordinates(null);
                   }}
@@ -328,6 +345,7 @@ export const TripMap = ({
                 <button
                   className="secondary-button popup-button"
                   onClick={() => {
+                    setAutoFitEnabled(false);
                     void onMapAction("end", contextCoordinates);
                     setContextCoordinates(null);
                   }}

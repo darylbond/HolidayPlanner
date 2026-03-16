@@ -546,6 +546,13 @@ textarea:focus {
   transform: none;
 }
 
+.day-card-summary:focus-visible,
+.candidate-option:focus-visible,
+.popup-button:focus-visible {
+  outline: 2px solid rgba(217, 72, 15, 0.45);
+  outline-offset: 3px;
+}
+
 .day-metrics,
 .detail-block {
   display: flex;
@@ -615,6 +622,8 @@ textarea:focus {
 .dialog-map-frame {
   overflow: hidden;
   border-radius: 1.1rem;
+  min-height: 22rem;
+  background: rgba(226, 232, 240, 0.65);
 }
 
 .dialog-map {
