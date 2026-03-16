@@ -5,7 +5,7 @@ Holiday Planner is a static React web app for planning a road-trip holiday with 
 ## What it does
 
 - Accepts a start point, end point, holiday length, max driving hours per day, fuel consumption, fuel tank size, and a list of candidate destinations.
-- Chooses and orders destinations to fit within the holiday window, using an exact search for up to eight destinations and a greedy fallback after that.
+- Chooses and orders destinations to fit within the holiday window using a fast insertion heuristic designed to stay responsive in the browser.
 - Builds a route with daily driving chunks so long legs can be split into overnight stops.
 - Looks up nearby campsites for generated overnight stops with a preference for free-camp style listings.
 - Lists points of interest that sit close to each day’s route.
@@ -15,7 +15,7 @@ Holiday Planner is a static React web app for planning a road-trip holiday with 
 
 The app is fully client-side and uses public OpenStreetMap ecosystem endpoints:
 
-- Nominatim for geocoding.
+- Photon for geocoding and reverse geocoding.
 - OSRM demo routing for route geometry and drive time.
 - Overpass for campsites and points of interest.
 

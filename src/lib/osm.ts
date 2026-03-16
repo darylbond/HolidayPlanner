@@ -8,14 +8,30 @@ import type {
   RouteSection,
 } from "../types";
 
-const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
+const PHOTON_SEARCH_URL = "https://photon.komoot.io/api";
+const PHOTON_REVERSE_URL = "https://photon.komoot.io/reverse";
 const OSRM_URL = "https://router.project-osrm.org/route/v1/driving";
 const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
 
-type NominatimResult = {
-  lat: string;
-  lon: string;
-  display_name: string;
+type PhotonFeature = {
+  geometry?: {
+    coordinates?: [number, number];
+  };
+  properties?: {
+    name?: string;
+    city?: string;
+    state?: string;
+    country?: string;
+    county?: string;
+    district?: string;
+    suburb?: string;
+    street?: string;
+    postcode?: string;
+  };
+};
+
+type PhotonResponse = {
+  features?: PhotonFeature[];
 };
 
 type OverpassElement = {
@@ -94,6 +110,34 @@ const getElementCoordinates = (element: OverpassElement): Coordinates | null => 
 
 const buildOsmUrl = (element: OverpassElement) => `https://www.openstreetmap.org/${element.type}/${element.id}`;
 
+const formatPhotonLabel = (feature: PhotonFeature, fallbackName: string) => {
+  const properties = feature.properties ?? {};
+  const parts = [
+    properties.name,
+    properties.city ?? properties.county ?? properties.district ?? properties.suburb,
+    properties.state,
+    properties.country,
+  ].filter((part, index, allParts): part is string => Boolean(part) && allParts.indexOf(part) === index);
+
+  return parts.join(", ") || fallbackName;
+};
+
+const toPhotonCandidate = (feature: PhotonFeature, fallbackName: string): LocationCandidate | null => {
+  const coordinates = feature.geometry?.coordinates;
+
+  if (!coordinates || coordinates.length !== 2) {
+    return null;
+  }
+
+  return {
+    name: formatPhotonLabel(feature, fallbackName),
+    coordinates: {
+      lat: coordinates[1],
+      lng: coordinates[0],
+    },
+  };
+};
+
 export const searchPlaceCandidates = async (query: string, limit = 5): Promise<LocationCandidate[]> => {
   const trimmedQuery = query.trim();
 
@@ -108,20 +152,16 @@ export const searchPlaceCandidates = async (query: string, limit = 5): Promise<L
     return cached;
   }
 
-  const url = `${NOMINATIM_URL}?format=jsonv2&limit=${limit}&q=${encodeURIComponent(trimmedQuery)}`;
-  const results = await fetchJson<NominatimResult[]>(url, {
+  const url = `${PHOTON_SEARCH_URL}?limit=${limit}&q=${encodeURIComponent(trimmedQuery)}`;
+  const payload = await fetchJson<PhotonResponse>(url, {
     headers: {
       Accept: "application/json",
     },
   });
 
-  const candidates = results.map((result) => ({
-    name: result.display_name,
-    coordinates: {
-      lat: Number(result.lat),
-      lng: Number(result.lon),
-    },
-  }));
+  const candidates = (payload.features ?? [])
+    .map((feature) => toPhotonCandidate(feature, trimmedQuery))
+    .filter((candidate): candidate is LocationCandidate => candidate !== null);
 
   geocodeCache.set(cacheKey, candidates);
   return candidates;
@@ -145,15 +185,18 @@ export const reverseGeocodePlace = async (coordinates: Coordinates): Promise<Loc
     return cached;
   }
 
-  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${coordinates.lat}&lon=${coordinates.lng}`;
-  const result = await fetchJson<{ display_name?: string }>(url, {
+  const url = `${PHOTON_REVERSE_URL}?lat=${coordinates.lat}&lon=${coordinates.lng}`;
+  const payload = await fetchJson<PhotonResponse>(url, {
     headers: {
       Accept: "application/json",
     },
   });
 
+  const topFeature = payload.features?.[0];
+  const label = topFeature ? formatPhotonLabel(topFeature, `Pinned ${coordinates.lat.toFixed(4)}, ${coordinates.lng.toFixed(4)}`) : undefined;
+
   const candidate = {
-    name: result.display_name ?? `Pinned ${coordinates.lat.toFixed(4)}, ${coordinates.lng.toFixed(4)}`,
+    name: label ?? `Pinned ${coordinates.lat.toFixed(4)}, ${coordinates.lng.toFixed(4)}`,
     coordinates,
   };
 

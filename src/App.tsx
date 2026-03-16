@@ -404,7 +404,7 @@ function App() {
           <aside className="info-card">
             <p className="eyebrow">How it works</p>
             <ul>
-              <li>The app geocodes locations with OpenStreetMap Nominatim.</li>
+              <li>The app geocodes locations with Photon's OpenStreetMap search index.</li>
               <li>Route geometry and drive times come from OSRM.</li>
               <li>Overnight campsite suggestions and POIs come from Overpass map data.</li>
               <li>The planner now uses a fast insertion heuristic so larger destination sets stay responsive.</li>

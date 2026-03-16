@@ -70,10 +70,6 @@ export const LocationConfirmDialog = ({
     setRefinedCoordinates(null);
   }, [candidates, isOpen, query]);
 
-  if (!isOpen) {
-    return null;
-  }
-
   const selectedCandidate = candidates[selectedIndex] ?? null;
   const confirmedCandidate = useMemo(
     () =>
@@ -89,6 +85,10 @@ export const LocationConfirmDialog = ({
     confirmedCandidate !== null &&
     (confirmedCandidate.coordinates.lat !== selectedCandidate?.coordinates.lat ||
       confirmedCandidate.coordinates.lng !== selectedCandidate?.coordinates.lng);
+
+  if (!isOpen) {
+    return null;
+  }
 
   return (
     <div className="dialog-backdrop" role="presentation">
