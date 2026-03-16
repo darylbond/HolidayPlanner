@@ -1,7 +1,8 @@
-import { distanceAlongPathKm, haversineKm, slicePolylineByKm } from "./geo";
+import { distanceAlongPathKm, haversineKm, pointAlongPathKm, slicePolylineByKm } from "./geo";
 import { findNearbyCampsites, findPointsOfInterestAlongPath, geocodePlace, routeBetween } from "./osm";
 import type {
   DailyPlan,
+  FuelStop,
   PlannerInput,
   PlanningPreview,
   PlanningProgressUpdate,
@@ -270,6 +271,38 @@ const calculateRefuelStops = (distanceKm: number, fuelConsumptionLitresPer100Km:
   return Math.max(0, Math.ceil(distanceKm / tankRangeKm) - 1);
 };
 
+const buildFuelStops = (
+  geometry: RouteSection["geometry"],
+  distanceKm: number,
+  durationHours: number,
+  fuelConsumptionLitresPer100Km: number,
+  fuelTankLitres: number,
+): FuelStop[] => {
+  const tankRangeKm = (fuelTankLitres / fuelConsumptionLitresPer100Km) * 100;
+
+  if (!Number.isFinite(tankRangeKm) || tankRangeKm <= 0 || distanceKm <= tankRangeKm * 0.82) {
+    return [];
+  }
+
+  const usableRangeKm = tankRangeKm * 0.82;
+  const stopCount = Math.max(1, Math.ceil(distanceKm / usableRangeKm) - 1);
+  const balancedSegmentKm = distanceKm / (stopCount + 1);
+
+  return Array.from({ length: stopCount }, (_, index) => {
+    const distanceFromDayStartKm = balancedSegmentKm * (index + 1);
+    const coordinates = pointAlongPathKm(geometry, distanceFromDayStartKm) ?? geometry[geometry.length - 1];
+
+    return {
+      id: `fuel-stop-${index + 1}-${Math.round(distanceFromDayStartKm * 10)}`,
+      name: `Fuel stop ${index + 1}`,
+      coordinates,
+      distanceFromDayStartKm: roundToOneDecimal(distanceFromDayStartKm),
+      driveHoursFromDayStart:
+        distanceKm === 0 ? 0 : roundToOneDecimal(durationHours * (distanceFromDayStartKm / distanceKm)),
+    };
+  });
+};
+
 const buildDailyPlans = async (
   allWaypoints: ResolvedWaypoint[],
   routeSections: RouteSection[],
@@ -305,6 +338,13 @@ const buildDailyPlans = async (
       }
 
       const fuelUsedLitres = (chunk.distanceKm * input.fuelConsumptionLitresPer100Km) / 100;
+      const fuelStops = buildFuelStops(
+        chunk.geometry,
+        chunk.distanceKm,
+        chunk.durationHours,
+        input.fuelConsumptionLitresPer100Km,
+        input.fuelTankLitres,
+      );
       const notes = [] as string[];
 
       if (!finalChunk) {
@@ -313,6 +353,12 @@ const buildDailyPlans = async (
 
       if (finalChunk && targetWaypoint.kind === "destination" && targetWaypoint.stayDays > 0) {
         notes.push(`Arrival day for ${targetWaypoint.name}. ${targetWaypoint.stayDays} stay day(s) are allocated next.`);
+      }
+
+      if (fuelStops.length > 0) {
+        notes.push(
+          `Balanced ${fuelStops.length} fuel stop${fuelStops.length === 1 ? "" : "s"} across the drive day to keep each leg within tank range.`,
+        );
       }
 
       rawDailyPlans.push({
@@ -325,11 +371,8 @@ const buildDailyPlans = async (
         driveHours: roundToOneDecimal(chunk.durationHours),
         distanceKm: roundToOneDecimal(chunk.distanceKm),
         fuelUsedLitres: roundToOneDecimal(fuelUsedLitres),
-        refuelStops: calculateRefuelStops(
-          chunk.distanceKm,
-          input.fuelConsumptionLitresPer100Km,
-          input.fuelTankLitres,
-        ),
+        refuelStops: fuelStops.length,
+        fuelStops,
         overnightStop,
         destinationStop: finalChunk ? targetWaypoint : undefined,
         campsites: [],
@@ -354,6 +397,7 @@ const buildDailyPlans = async (
           distanceKm: 0,
           fuelUsedLitres: 0,
           refuelStops: 0,
+          fuelStops: [],
           destinationStop: targetWaypoint,
           campsites: [],
           pois: [],

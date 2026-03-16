@@ -19,25 +19,53 @@ const markerStyles = {
   destination: "#d97706",
   overnight: "#b91c1c",
   end: "#1d4ed8",
+  fuel: "#0ea5e9",
 } as const;
 
 const candidateMarkerStyle = "#64748b";
 
-const FitRoute = ({ points }: { points: LatLngTuple[] }) => {
+const FitRoute = ({ enabled, points }: { enabled: boolean; points: LatLngTuple[] }) => {
   const map = useMap();
 
   useEffect(() => {
-    if (points.length > 0) {
+    if (enabled && points.length > 0) {
       map.fitBounds(points, {
         padding: [36, 36],
       });
     }
-  }, [map, points]);
+  }, [enabled, map, points]);
 
   return null;
 };
 
-const MapContextEvents = ({ onContextMenu, onDismiss }: { onContextMenu: (coordinates: Coordinates) => void; onDismiss: () => void }) => {
+const MapInteractionEvents = ({
+  onContextMenu,
+  onDismiss,
+  onUserInteract,
+}: {
+  onContextMenu: (coordinates: Coordinates) => void;
+  onDismiss: () => void;
+  onUserInteract: () => void;
+}) => {
+  const map = useMap();
+
+  useEffect(() => {
+    const container = map.getContainer();
+    const handleUserInteract = () => onUserInteract();
+
+    container.addEventListener("pointerdown", handleUserInteract, { passive: true });
+    container.addEventListener("wheel", handleUserInteract, { passive: true });
+    container.addEventListener("touchstart", handleUserInteract, { passive: true });
+    container.addEventListener("contextmenu", handleUserInteract, { passive: true });
+
+    return () => {
+      container.removeEventListener("pointerdown", handleUserInteract);
+      container.removeEventListener("wheel", handleUserInteract);
+      container.removeEventListener("touchstart", handleUserInteract);
+      container.removeEventListener("contextmenu", handleUserInteract);
+    };
+  }, [map, onUserInteract]);
+
   useMapEvents({
     click: () => onDismiss(),
     contextmenu: (event) => {
@@ -62,6 +90,7 @@ export const TripMap = ({
   selectedDay,
 }: TripMapProps) => {
   const [contextCoordinates, setContextCoordinates] = useState<Coordinates | null>(null);
+  const [autoFitEnabled, setAutoFitEnabled] = useState(true);
   const displayedJourney = preview ?? (plan
     ? {
         selectedDestinations: plan.selectedDestinations,
@@ -77,6 +106,7 @@ export const TripMap = ({
   const routedPath = displayedJourney?.routeSections.flatMap((section) => section.geometry).map((point) => [point.lat, point.lng] as LatLngTuple) ?? [];
   const directPath = routeWaypoints.map((waypoint) => [waypoint.coordinates.lat, waypoint.coordinates.lng] as LatLngTuple);
   const highlightedPath = selectedDay?.geometry.map((point) => [point.lat, point.lng] as LatLngTuple) ?? [];
+  const selectedFuelStops = selectedDay?.fuelStops ?? [];
 
   const extraCandidateMarkers = useMemo(
     () =>
@@ -105,13 +135,18 @@ export const TripMap = ({
           <p className="eyebrow">Map</p>
           <h2>Live preview map</h2>
         </div>
-        <p className="subtle-copy">
-          {selectedDay
-            ? `Highlighting ${selectedDay.title}`
-            : isPlanning
-              ? "Routing the current draft live. Right-click to add or move stops."
-              : "Right-click anywhere to add a destination or reset the trip bounds."}
-        </p>
+        <div className="map-panel-actions">
+          <p className="subtle-copy">
+            {selectedDay
+              ? `Highlighting ${selectedDay.title}`
+              : isPlanning
+                ? "Routing the current draft live. Right-click to add or move stops."
+                : "Right-click anywhere to add a destination or reset the trip bounds."}
+          </p>
+          <button className="secondary-button compact-button" onClick={() => setAutoFitEnabled(true)} type="button">
+            Recenter map
+          </button>
+        </div>
       </div>
 
       <div className="map-frame">
@@ -120,8 +155,12 @@ export const TripMap = ({
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
-          <FitRoute points={fitPoints} />
-          <MapContextEvents onContextMenu={setContextCoordinates} onDismiss={() => setContextCoordinates(null)} />
+          <FitRoute enabled={autoFitEnabled} points={fitPoints} />
+          <MapInteractionEvents
+            onContextMenu={setContextCoordinates}
+            onDismiss={() => setContextCoordinates(null)}
+            onUserInteract={() => setAutoFitEnabled(false)}
+          />
 
           {directPath.length > 1 ? <Polyline color="#165dff" dashArray="8 12" opacity={routedPath.length > 1 ? 0.18 : 0.55} positions={directPath} weight={4} /> : null}
 
@@ -148,6 +187,24 @@ export const TripMap = ({
               : null}
 
           {highlightedPath.length > 1 && (isPlanning || plannedDriveDays.length === 0) ? <Polyline color="#ef4444" positions={highlightedPath} weight={6} /> : null}
+
+          {selectedFuelStops.map((fuelStop) => (
+            <CircleMarker
+              center={[fuelStop.coordinates.lat, fuelStop.coordinates.lng]}
+              key={fuelStop.id}
+              pathOptions={{
+                color: markerStyles.fuel,
+                fillColor: markerStyles.fuel,
+                fillOpacity: 0.92,
+              }}
+              radius={5}
+            >
+              <Popup>
+                <strong>{fuelStop.name}</strong>
+                <div>{fuelStop.distanceFromDayStartKm} km into the selected drive day</div>
+              </Popup>
+            </CircleMarker>
+          ))}
 
           {routeWaypoints.map((waypoint) => (
             <CircleMarker
@@ -284,7 +341,7 @@ export const TripMap = ({
         </MapContainer>
       </div>
 
-      <p className="subtle-copy map-help-copy">Tip: click a route leg to focus its table entry, or select a table row to highlight the matching leg on the map.</p>
+      <p className="subtle-copy map-help-copy">Tip: click a route leg to focus its table entry, use Recenter after panning manually, and fuel-stop markers appear for the selected drive day.</p>
     </section>
   );
 };

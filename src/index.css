@@ -254,6 +254,12 @@ textarea:focus {
   gap: 1rem;
 }
 
+.map-panel-actions {
+  display: grid;
+  justify-items: end;
+  gap: 0.6rem;
+}
+
 .destination-status,
 .form-footer-copy,
 .map-help-copy {
@@ -624,6 +630,24 @@ textarea:focus {
   overflow: auto;
 }
 
+.candidate-refine-note {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: 1rem;
+  background: rgba(14, 165, 233, 0.08);
+  border: 1px solid rgba(14, 165, 233, 0.14);
+}
+
+.candidate-refine-note strong,
+.candidate-refine-note span {
+  margin: 0;
+}
+
+.candidate-refine-note span {
+  color: #5a6770;
+}
+
 .candidate-option {
   display: grid;
   gap: 0.35rem;
@@ -664,7 +688,8 @@ textarea:focus {
   }
 
   .with-metrics,
-  .inline-header {
+  .inline-header,
+  .panel-heading {
     flex-direction: column;
   }
 

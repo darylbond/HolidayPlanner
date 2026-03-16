@@ -1,0 +1,3 @@
+- [x] add fuel stop information with simple optimisation of fuel stop points
+- [x] allow refinement on map when confirming location
+- [x] if the user is interacting with the map don't jump it around

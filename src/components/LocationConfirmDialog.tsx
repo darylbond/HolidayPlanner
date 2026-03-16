@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
-import { CircleMarker, MapContainer, TileLayer, useMap } from "react-leaflet";
+import { useEffect, useMemo, useState } from "react";
+import { CircleMarker, MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import type { LatLngTuple } from "leaflet";
-import type { LocationCandidate } from "../types";
+import type { Coordinates, LocationCandidate } from "../types";
 
 type LocationConfirmDialogProps = {
   candidates: LocationCandidate[];
@@ -30,6 +30,19 @@ const FitCandidates = ({ candidates }: { candidates: LocationCandidate[] }) => {
   return null;
 };
 
+const RefineLocationEvents = ({ onRefine }: { onRefine: (coordinates: Coordinates) => void }) => {
+  useMapEvents({
+    click: (event) => {
+      onRefine({
+        lat: event.latlng.lat,
+        lng: event.latlng.lng,
+      });
+    },
+  });
+
+  return null;
+};
+
 export const LocationConfirmDialog = ({
   candidates,
   errorMessage,
@@ -41,9 +54,11 @@ export const LocationConfirmDialog = ({
   onConfirm,
 }: LocationConfirmDialogProps) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [refinedCoordinates, setRefinedCoordinates] = useState<Coordinates | null>(null);
 
   useEffect(() => {
     setSelectedIndex(0);
+    setRefinedCoordinates(null);
   }, [candidates, isOpen, query]);
 
   if (!isOpen) {
@@ -51,6 +66,20 @@ export const LocationConfirmDialog = ({
   }
 
   const selectedCandidate = candidates[selectedIndex] ?? null;
+  const confirmedCandidate = useMemo(
+    () =>
+      selectedCandidate
+        ? {
+            ...selectedCandidate,
+            coordinates: refinedCoordinates ?? selectedCandidate.coordinates,
+          }
+        : null,
+    [refinedCoordinates, selectedCandidate],
+  );
+  const hasRefinedPin =
+    confirmedCandidate !== null &&
+    (confirmedCandidate.coordinates.lat !== selectedCandidate?.coordinates.lat ||
+      confirmedCandidate.coordinates.lng !== selectedCandidate?.coordinates.lng);
 
   return (
     <div className="dialog-backdrop" role="presentation">
@@ -65,7 +94,7 @@ export const LocationConfirmDialog = ({
           </button>
         </div>
 
-        <p className="subtle-copy">Review the map match for "{query}" and confirm the best result.</p>
+        <p className="subtle-copy">Review the map match for "{query}", then click the map to refine the pin before confirming if needed.</p>
 
         {errorMessage ? <div className="error-banner">{errorMessage}</div> : null}
         {isLoading ? <p className="subtle-copy">Searching the map…</p> : null}
@@ -79,6 +108,7 @@ export const LocationConfirmDialog = ({
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
                 <FitCandidates candidates={candidates} />
+                <RefineLocationEvents onRefine={setRefinedCoordinates} />
 
                 {candidates.map((candidate, index) => (
                   <CircleMarker
@@ -95,15 +125,40 @@ export const LocationConfirmDialog = ({
                     radius={index === selectedIndex ? 9 : 6}
                   />
                 ))}
+
+                {confirmedCandidate ? (
+                  <CircleMarker
+                    center={[confirmedCandidate.coordinates.lat, confirmedCandidate.coordinates.lng]}
+                    pathOptions={{
+                      color: hasRefinedPin ? "#ef4444" : "#d9480f",
+                      fillColor: hasRefinedPin ? "#ef4444" : "#d9480f",
+                      fillOpacity: 0.25,
+                      weight: 3,
+                    }}
+                    radius={12}
+                  />
+                ) : null}
               </MapContainer>
             </div>
 
             <div className="candidate-list">
+              <div className="candidate-refine-note">
+                <strong>{hasRefinedPin ? "Refined pin active" : "Map refinement available"}</strong>
+                <span>
+                  {confirmedCandidate
+                    ? `${confirmedCandidate.coordinates.lat.toFixed(4)}, ${confirmedCandidate.coordinates.lng.toFixed(4)}`
+                    : "Select a candidate to refine it on the map."}
+                </span>
+              </div>
+
               {candidates.map((candidate, index) => (
                 <button
                   className={`candidate-option ${index === selectedIndex ? "selected" : ""}`}
                   key={`${candidate.name}-${candidate.coordinates.lat}-${candidate.coordinates.lng}`}
-                  onClick={() => setSelectedIndex(index)}
+                  onClick={() => {
+                    setSelectedIndex(index);
+                    setRefinedCoordinates(null);
+                  }}
                   type="button"
                 >
                   <strong>{candidate.name}</strong>
@@ -120,7 +175,12 @@ export const LocationConfirmDialog = ({
           <button className="secondary-button" onClick={onCancel} type="button">
             Cancel
           </button>
-          <button className="primary-button" disabled={!selectedCandidate || isLoading} onClick={() => selectedCandidate && onConfirm(selectedCandidate)} type="button">
+          <button
+            className="primary-button"
+            disabled={!confirmedCandidate || isLoading}
+            onClick={() => confirmedCandidate && onConfirm(confirmedCandidate)}
+            type="button"
+          >
             Confirm location
           </button>
         </div>

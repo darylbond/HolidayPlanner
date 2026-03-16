@@ -88,6 +88,34 @@ export const slicePolylineByKm = (path: Coordinates[], startKm: number, endKm: n
   return dedupeCoordinates(result);
 };
 
+export const pointAlongPathKm = (path: Coordinates[], targetKm: number) => {
+  if (path.length === 0) {
+    return null;
+  }
+
+  if (path.length === 1 || targetKm <= 0) {
+    return path[0];
+  }
+
+  let travelledKm = 0;
+
+  for (let index = 1; index < path.length; index += 1) {
+    const segmentStart = path[index - 1];
+    const segmentEnd = path[index];
+    const segmentKm = haversineKm(segmentStart, segmentEnd);
+
+    if (travelledKm + segmentKm >= targetKm) {
+      const remainingKm = targetKm - travelledKm;
+      const fraction = segmentKm === 0 ? 0 : remainingKm / segmentKm;
+      return interpolatePoint(segmentStart, segmentEnd, Math.max(0, Math.min(1, fraction)));
+    }
+
+    travelledKm += segmentKm;
+  }
+
+  return path[path.length - 1];
+};
+
 export const dedupeCoordinates = (points: Coordinates[]) => {
   const deduped: Coordinates[] = [];
 

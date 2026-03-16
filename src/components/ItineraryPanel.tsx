@@ -112,6 +112,20 @@ export const ItineraryPanel = ({ plan, selectedDayNumber, onSelectDay }: Itinera
                   </div>
                 ) : null}
 
+                {day.fuelStops.length > 0 ? (
+                  <div className="detail-block">
+                    <strong>Suggested fuel stops</strong>
+                    {day.fuelStops.map((fuelStop) => (
+                      <div className="list-row" key={fuelStop.id}>
+                        <span>{fuelStop.name}</span>
+                        <span>
+                          {fuelStop.distanceFromDayStartKm} km into the day · about {fuelStop.driveHoursFromDayStart}h
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
                 {day.campsites.length > 0 ? (
                   <div className="detail-block">
                     <strong>Stay options near the overnight stop</strong>

@@ -63,6 +63,14 @@ export type PointOfInterest = {
   osmUrl: string;
 };
 
+export type FuelStop = {
+  id: string;
+  name: string;
+  coordinates: Coordinates;
+  distanceFromDayStartKm: number;
+  driveHoursFromDayStart: number;
+};
+
 export type LocationCandidate = {
   name: string;
   coordinates: Coordinates;
@@ -110,6 +118,7 @@ export type DailyPlan = {
   distanceKm: number;
   fuelUsedLitres: number;
   refuelStops: number;
+  fuelStops: FuelStop[];
   overnightStop?: ResolvedWaypoint;
   destinationStop?: ResolvedWaypoint;
   campsites: CampsiteOption[];
