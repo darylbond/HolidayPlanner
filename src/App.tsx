@@ -414,6 +414,7 @@ function App() {
             isPlanning={isPlanning}
             onMapAction={handleMapAction}
             onRemoveDestination={handleRemoveDestination}
+            onSelectDay={setSelectedDay}
             plan={plan}
             plannerInput={plannerInput}
             preview={preview}

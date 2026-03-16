@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useRef } from "react";
 import type { PlannerLogEntry } from "../types";
 
 type ActivityLogPanelProps = {
@@ -6,7 +7,22 @@ type ActivityLogPanelProps = {
 };
 
 export const ActivityLogPanel = ({ isPlanning, logEntries }: ActivityLogPanelProps) => {
-  const visibleEntries = [...logEntries].reverse();
+  const consoleRef = useRef<HTMLTextAreaElement | null>(null);
+  const consoleText = useMemo(
+    () =>
+      logEntries
+        .map((entry) => `${entry.timestamp} [${entry.stage.toUpperCase()}] ${entry.message}`)
+        .join("\n"),
+    [logEntries],
+  );
+
+  useEffect(() => {
+    if (!consoleRef.current) {
+      return;
+    }
+
+    consoleRef.current.scrollTop = consoleRef.current.scrollHeight;
+  }, [consoleText]);
 
   return (
     <details className="activity-panel" open={isPlanning || logEntries.length < 6}>
@@ -18,18 +34,14 @@ export const ActivityLogPanel = ({ isPlanning, logEntries }: ActivityLogPanelPro
         <span className={`log-status ${isPlanning ? "live" : "idle"}`}>{isPlanning ? "Live" : `${logEntries.length} events`}</span>
       </summary>
 
-      <div className="activity-list">
-        {visibleEntries.length === 0 ? <p className="subtle-copy">Planner events will appear here as soon as the route starts building.</p> : null}
-
-        {visibleEntries.map((entry) => (
-          <article className="activity-entry" key={entry.id}>
-            <div className="activity-entry-header">
-              <strong>{entry.message}</strong>
-              <span>{entry.timestamp}</span>
-            </div>
-            <p>{entry.stage}</p>
-          </article>
-        ))}
+      <div className="activity-console-wrap">
+        <textarea
+          className="activity-console"
+          placeholder="Planner events will appear here as soon as the route starts building."
+          readOnly
+          ref={consoleRef}
+          value={consoleText}
+        />
       </div>
     </details>
   );

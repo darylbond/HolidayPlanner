@@ -31,6 +31,16 @@ export const PlannerForm = ({
   value,
 }: PlannerFormProps) => {
   const [isDestinationListOpen, setIsDestinationListOpen] = useState(true);
+  const [openDestinations, setOpenDestinations] = useState<Record<string, boolean>>({});
+
+  const isDestinationExpanded = (destinationId: string) => openDestinations[destinationId] ?? true;
+
+  const toggleDestinationCard = (destinationId: string) => {
+    setOpenDestinations((current) => ({
+      ...current,
+      [destinationId]: !(current[destinationId] ?? true),
+    }));
+  };
 
   const updateField = <Key extends keyof PlannerInput>(field: Key, fieldValue: PlannerInput[Key]) => {
     onChange({
@@ -103,7 +113,7 @@ export const PlannerForm = ({
       <div className="field-grid two-column">
         <label className="location-label">
           <span>Start point</span>
-          <div className="location-input-row">
+          <div className="location-input-row location-input-stack">
             <input value={value.start.name} onChange={(event) => updateNamedLocation("start", event.target.value)} required />
             <button
               className="secondary-button compact-button"
@@ -124,7 +134,7 @@ export const PlannerForm = ({
 
         <label className="location-label">
           <span>End point</span>
-          <div className="location-input-row">
+          <div className="location-input-row location-input-stack">
             <input value={value.end.name} onChange={(event) => updateNamedLocation("end", event.target.value)} required />
             <button
               className="secondary-button compact-button"
@@ -218,80 +228,88 @@ export const PlannerForm = ({
         {isDestinationListOpen ? (
           <div className="destination-list">
             {value.destinations.map((destination, index) => (
-            <article className="destination-card" key={destination.id}>
-              <div className="destination-card-header">
-                <div>
-                  <strong>Stop {index + 1}</strong>
-                  <p className="destination-status">{describeLocation(destination.location)}</p>
-                </div>
-                <button
-                  className="ghost-button"
-                  type="button"
-                  onClick={() => onRemoveDestination(destination.id)}
-                >
-                  Remove
-                </button>
-              </div>
-
-              <div className="field-grid destination-grid">
-                <label className="destination-name">
-                  <span>Destination</span>
-                  <div className="location-input-row">
-                    <input
-                      value={destination.location.name}
-                      onChange={(event) => updateDestinationLocation(destination.id, event.target.value)}
-                      placeholder="Example: Wilsons Promontory, VIC"
-                    />
+              <article className="destination-card" key={destination.id}>
+                <div className="destination-card-header">
+                  <div>
+                    <strong>Stop {index + 1}</strong>
+                    <p className="destination-card-title">{destination.location.name.trim() || "Untitled destination"}</p>
+                    <p className="destination-status">{describeLocation(destination.location)}</p>
+                  </div>
+                  <div className="destination-card-actions">
                     <button
-                      className="secondary-button compact-button"
-                      onClick={() =>
-                        onOpenLocationConfirm({
-                          kind: "destination",
-                          destinationId: destination.id,
-                          label: `Destination ${index + 1}`,
-                          query: destination.location.name,
-                        })
-                      }
+                      className="ghost-button neutral-button"
+                      onClick={() => toggleDestinationCard(destination.id)}
                       type="button"
                     >
-                      Confirm on map
+                      {isDestinationExpanded(destination.id) ? "Collapse" : "Expand"}
+                    </button>
+                    <button className="ghost-button" type="button" onClick={() => onRemoveDestination(destination.id)}>
+                      Remove
                     </button>
                   </div>
-                </label>
+                </div>
 
-                <label>
-                  <span>Stay days</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={destination.stayDays}
-                    onChange={(event) => updateDestination(destination.id, "stayDays", Number(event.target.value))}
-                  />
-                </label>
+                {isDestinationExpanded(destination.id) ? (
+                  <div className="field-grid destination-grid destination-card-body">
+                    <label className="destination-name">
+                      <span>Destination</span>
+                      <div className="location-input-row">
+                        <input
+                          value={destination.location.name}
+                          onChange={(event) => updateDestinationLocation(destination.id, event.target.value)}
+                          placeholder="Example: Wilsons Promontory, VIC"
+                        />
+                        <button
+                          className="secondary-button compact-button"
+                          onClick={() =>
+                            onOpenLocationConfirm({
+                              kind: "destination",
+                              destinationId: destination.id,
+                              label: `Destination ${index + 1}`,
+                              query: destination.location.name,
+                            })
+                          }
+                          type="button"
+                        >
+                          Confirm on map
+                        </button>
+                      </div>
+                    </label>
 
-                <label>
-                  <span>Desirability</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="10"
-                    step="1"
-                    value={destination.desirability}
-                    onChange={(event) => updateDestination(destination.id, "desirability", Number(event.target.value))}
-                  />
-                </label>
+                    <label>
+                      <span>Stay days</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={destination.stayDays}
+                        onChange={(event) => updateDestination(destination.id, "stayDays", Number(event.target.value))}
+                      />
+                    </label>
 
-                <label className="destination-notes">
-                  <span>Notes</span>
-                  <textarea
-                    value={destination.notes ?? ""}
-                    onChange={(event) => updateDestination(destination.id, "notes", event.target.value)}
-                    rows={2}
-                    placeholder="Optional notes for the stay"
-                  />
-                </label>
-              </div>
+                    <label>
+                      <span>Desirability</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="10"
+                        step="1"
+                        value={destination.desirability}
+                        onChange={(event) => updateDestination(destination.id, "desirability", Number(event.target.value))}
+                      />
+                    </label>
+
+                    <label className="destination-notes">
+                      <span>Notes</span>
+                      <textarea
+                        value={destination.notes ?? ""}
+                        onChange={(event) => updateDestination(destination.id, "notes", event.target.value)}
+                        rows={2}
+                        placeholder="Optional notes for the stay"
+                      />
+                    </label>
+                  </div>
+                ) : null}
             </article>
             ))}
           </div>

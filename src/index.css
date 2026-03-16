@@ -177,6 +177,15 @@ a {
   align-items: center;
 }
 
+.location-input-stack {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.location-input-stack .compact-button {
+  align-self: flex-start;
+}
+
 .location-input-row input {
   flex: 1 1 auto;
 }
@@ -230,6 +239,12 @@ textarea:focus {
   border: 1px solid rgba(217, 119, 6, 0.12);
 }
 
+.destination-card-title {
+  margin: 0.25rem 0 0;
+  font-size: 1rem;
+  color: #17333b;
+}
+
 .destination-card-header,
 .panel-heading,
 .day-card-header {
@@ -244,6 +259,18 @@ textarea:focus {
 .map-help-copy {
   margin: 0;
   color: #667279;
+}
+
+.destination-card-actions,
+.day-card-header-actions {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.destination-card-body,
+.day-card-body {
+  margin-top: 0.9rem;
 }
 
 .destination-grid {
@@ -458,45 +485,32 @@ textarea:focus {
   color: #0f766e;
 }
 
-.activity-list {
-  display: grid;
-  gap: 0.8rem;
+.activity-console-wrap {
   margin-top: 1rem;
 }
 
-.activity-entry {
-  display: grid;
-  gap: 0.35rem;
-  padding: 0.9rem 1rem;
+.activity-console {
+  width: 100%;
+  min-height: 14rem;
+  max-height: 18rem;
+  resize: vertical;
+  overflow: auto;
+  padding: 1rem;
   border-radius: 1rem;
-  background: rgba(248, 250, 252, 0.9);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid rgba(15, 118, 110, 0.16);
+  background: #0f172a;
+  color: #d1fae5;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.5;
 }
 
-.activity-entry p,
-.activity-entry strong {
-  margin: 0;
-}
-
-.activity-entry p {
-  color: #667279;
-  text-transform: capitalize;
-}
-
-.activity-entry-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.activity-entry-header span {
-  color: #667279;
-  white-space: nowrap;
+.activity-console::placeholder {
+  color: rgba(209, 250, 229, 0.56);
 }
 
 .day-card {
   display: grid;
-  gap: 0.85rem;
   padding: 1rem;
   border-radius: 1.15rem;
   border: 1px solid rgba(21, 32, 43, 0.08);
@@ -507,6 +521,23 @@ textarea:focus {
 .day-card.selected {
   border-color: rgba(217, 72, 15, 0.34);
   box-shadow: 0 16px 32px rgba(217, 72, 15, 0.14);
+}
+
+.day-card-summary {
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  text-align: left;
+}
+
+.day-card-summary:hover {
+  transform: none;
 }
 
 .day-metrics,
@@ -657,8 +688,13 @@ textarea:focus {
   .location-input-row,
   .header-actions,
   .dialog-actions,
-  .activity-entry-header {
+  .destination-card-actions,
+  .day-card-header-actions {
     flex-direction: column;
+  }
+
+  .location-input-stack .compact-button {
+    width: 100%;
   }
 
   .destination-name,
