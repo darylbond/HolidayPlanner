@@ -47,8 +47,9 @@ npm run build
 The repository includes a GitHub Actions workflow that builds and deploys the app to GitHub Pages.
 
 1. Push the repository to GitHub.
-2. In the repository settings, enable GitHub Pages and choose `GitHub Actions` as the source.
-3. The workflow in `.github/workflows/deploy.yml` will publish the built app.
+2. In the repository settings, open `Pages` and set the source to `Deploy from a branch`.
+3. Select the `gh-pages` branch and the `/ (root)` folder.
+4. The workflow in `.github/workflows/deploy.yml` will build the app and publish the `dist` output to that branch.
 
 The Vite base path is set automatically from `GITHUB_REPOSITORY` during production builds, with `HolidayPlanner` as a fallback.
 
